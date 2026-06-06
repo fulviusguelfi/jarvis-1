@@ -1,4 +1,19 @@
-faster-whisper>=1.0.0
-kokoro-onnx>=0.5.0
+# --- v1 (necessário para rodar o pipeline atual) ---
+faster-whisper>=1.2.0
+piper-tts>=1.4.0
+av>=14.0.0
+ctranslate2>=4.7.0
+onnxruntime>=1.26.0
 requests>=2.32.0
 numpy>=1.26.0
+# kokoro-onnx>=0.5.0  # TTS legado (lento), só se TTS_MODE=kokoro
+
+# --- Fase agêntica (planejado — ver docs/PLANO.md) ---
+# openwakeword   # wake word "Hey Jarvis" (ONNX)
+# silero-vad     # endpointing + barge-in (ONNX)
+# pynput         # automação teclado/mouse X11 (XTEST)
+# EWMHlib        # controle de janelas X11/KDE
+# mss            # screenshot
+# psutil         # status do sistema
+# playwright     # browser via accessibility tree
+# mcp            # ponte MCP (já vem com mcp-server-fetch/-git/-time)

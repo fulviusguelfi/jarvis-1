@@ -1,12 +1,11 @@
 # Modelos (grandes demais para git — baixar separadamente)
 models/
 
-# Binários e builds das ferramentas
-tools/llama.cpp/build/
-tools/llama.cpp/.cache/
-tools/qwen3-tts-gguf/
-tools/*/build/
-tools/*/__pycache__/
+# Binários e builds das ferramentas (11GB — reconstruir via brainstorm/05 e CONTINUATION.md)
+tools/
+
+# Config local do Claude Code
+.claude/
 
 # Variáveis de ambiente e segredos
 .env
