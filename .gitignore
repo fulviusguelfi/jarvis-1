@@ -1,0 +1,40 @@
+# Modelos (grandes demais para git — baixar separadamente)
+models/
+
+# Binários e builds das ferramentas
+tools/llama.cpp/build/
+tools/llama.cpp/.cache/
+tools/qwen3-tts-gguf/
+tools/*/build/
+tools/*/__pycache__/
+
+# Variáveis de ambiente e segredos
+.env
+*.env
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+
+# Arquivos temporários de áudio
+/tmp/*.wav
+*.wav.raw
+
+# Logs
+*.log
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
