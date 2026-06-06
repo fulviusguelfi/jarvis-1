@@ -1,5 +1,7 @@
 # Jarvis-1 → Fluidez primeiro, depois arsenal agêntico (plano de implementação)
 
+> ⚠️ **MIGRAÇÃO PARA WINDOWS:** este plano foi escrito no sandbox Linux/SteamOS. A estratégia, as fases, os riscos de LLM e as decisões continuam valendo, mas a **camada de SO muda** (áudio, paths, Vulkan, automação de desktop). Ver [../CONTINUATION.md](../CONTINUATION.md) seção 3 (mapa Linux→Windows). Principais mudanças: (1) **Fase 0 nova** = portar `audio.py` p/ `sounddevice`; (2) os "Fatos do ambiente" abaixo eram do sandbox e devem ser **re-validados no Windows**; (3) **R5 melhora** — UI Automation (`uiautomation`/`pywinauto`) substitui o AT-SPI que faltava, então ler apps desktop passa a ser viável.
+
 ## Context
 
 A v1 do Jarvis funciona (Whisper → Qwen3-8B/Vulkan → Piper TTS, half-duplex, validada em conversa real). As dores relatadas foram de **fluidez**, não de capacidade: *"tempo de resposta inaceitável"*, *"quero full-duplex"*, *"o mic liga e desliga"*. Por isso: **consertar a interação ANTES de empilhar ferramentas** — e só então dar ao Jarvis o arsenal agêntico (file system, janelas, browser, online), mantendo o **cérebro local e grátis** (zero tokens pagos).
