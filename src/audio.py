@@ -6,6 +6,7 @@ import numpy as np
 import sounddevice as sd
 import wave
 from config import AUDIO_SAMPLE_RATE, AUDIO_CHANNELS, AUDIO_RECORD_SECONDS
+from vad import record_until_silence_vad  # F1.2: Silero VAD endpointing
 
 # Áudio sempre no dispositivo padrão do SO: não passamos `device=`, então o
 # sounddevice usa sd.default.device, que o PortAudio resolve para o default do SO.
@@ -111,42 +112,60 @@ def record(duration: float = AUDIO_RECORD_SECONDS, out_path: str | None = None) 
 
 def record_until_silence(
     max_duration: float = AUDIO_RECORD_SECONDS,
-    silence_db: float = -40.0,
-    silence_secs: float = 1.2,
-    out_path: str | None = None
+    silence_db: float = -40.0,  # Param legado (ignorado agora, para compatibilidade)
+    silence_secs: float = 1.2,  # Param legado (ignorado agora, para compatibilidade)
+    out_path: str | None = None,
+    vad_method: str = "silero"  # "silero" ou "rms" (legado)
 ) -> str:
-    """Grava até detectar silêncio."""
+    """
+    Grava audio até detectar fim de fala.
+
+    F1.2: Substituiu RMS por Silero VAD para endpointing preciso (< 300ms vs 1.2s).
+    Params silence_db e silence_secs sao ignorados (legado).
+    """
     path = out_path or tempfile.mktemp(suffix=".wav")
     stream = _get_mic_stream()
-    frames = []
-    silence_start = None
-    start = time.time()
-    spoke = False
-    chunk_size = int(AUDIO_SAMPLE_RATE * 0.1)
 
-    try:
-        while True:
-            elapsed = time.time() - start
-            if elapsed >= max_duration:
-                break
+    if vad_method == "silero":
+        # F1.2: novo metodo com Silero VAD
+        frames = record_until_silence_vad(
+            stream,
+            sample_rate=AUDIO_SAMPLE_RATE,
+            max_duration=max_duration,
+            silence_threshold=0.5,  # Limiar Silero VAD
+            min_silence_duration=0.5,  # 500ms de silencio = fim de fala
+        )
+    else:
+        # Fallback RMS (legado, para compat)
+        frames = []
+        silence_start = None
+        start = time.time()
+        spoke = False
+        chunk_size = int(AUDIO_SAMPLE_RATE * 0.1)
 
-            data, _ = stream.read(chunk_size)
-            frames.append(data)
-
-            samples = data.astype(np.float32) / 32768.0
-            rms = float(np.sqrt(np.mean(samples ** 2)))
-            rms_db = 20 * np.log10(rms + 1e-9)
-
-            if rms_db > silence_db:
-                spoke = True
-                silence_start = None
-            elif spoke:
-                if silence_start is None:
-                    silence_start = time.time()
-                elif time.time() - silence_start >= silence_secs:
+        try:
+            while True:
+                elapsed = time.time() - start
+                if elapsed >= max_duration:
                     break
-    except Exception as e:
-        print(f"[audio] erro durante gravação com VAD: {e}")
+
+                data, _ = stream.read(chunk_size)
+                frames.append(data)
+
+                samples = data.astype(np.float32) / 32768.0
+                rms = float(np.sqrt(np.mean(samples ** 2)))
+                rms_db = 20 * np.log10(rms + 1e-9)
+
+                if rms_db > silence_db:
+                    spoke = True
+                    silence_start = None
+                elif spoke:
+                    if silence_start is None:
+                        silence_start = time.time()
+                    elif time.time() - silence_start >= silence_secs:
+                        break
+        except Exception as e:
+            print(f"[audio] erro durante gravacao RMS: {e}")
 
     if frames:
         audio = np.vstack(frames) if len(frames) > 1 else frames[0]
