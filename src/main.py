@@ -142,16 +142,59 @@ def _check_mic() -> bool:
 
 def listen_for_wakeword_chunk() -> bool:
     """
-    Detecta "Hey Jarvis" com openWakeWord (F1.1).
+    Detecta wake word: tenta openWakeWord, fallback Whisper se modelo falhar.
 
-    DETERMINÍSTICO: Falha com erro claro se modelo não está disponível.
-    NÃO usa fallback invisível — exige hey_jarvis.onnx presente.
+    DETERMINÍSTICO: Avisa EXPLICITAMENTE qual modo está usando.
     """
     import numpy as np
+    import tempfile
+    import wave as _wave
+    import io
 
-    pcm = read_mic_chunk(0.08)  # 80ms exato para openWakeWord
-    audio_int16 = np.frombuffer(pcm, dtype=np.int16)
-    return detect_wake_word(audio_int16, sample_rate=AUDIO_SAMPLE_RATE)
+    pcm = read_mic_chunk(2.5)  # janela para ambos modos
+
+    # Tentar openWakeWord (80ms chunk)
+    audio_int16_chunk = np.frombuffer(pcm[:int(16000 * 0.08 * 2)], dtype=np.int16)
+    try:
+        if detect_wake_word(audio_int16_chunk, sample_rate=AUDIO_SAMPLE_RATE):
+            return True
+    except (FileNotFoundError, RuntimeError) as e:
+        # Modelo não existe ou está corrompido
+        print(f"\n[FALLBACK] openWakeWord indisponível: {type(e).__name__}")
+        print("[FALLBACK] Usando Whisper como wake word (v0.1.0 mode)\n")
+
+        # Fallback: Whisper (v0.1.0)
+        audio_int16 = np.frombuffer(pcm, dtype=np.int16)
+        buf = io.BytesIO()
+        with _wave.open(buf, "w") as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(2)
+            wf.setframerate(AUDIO_SAMPLE_RATE)
+            wf.writeframes(audio_int16.tobytes())
+        buf.seek(0)
+
+        tmp = tempfile.mktemp(suffix=".wav")
+        with open(tmp, "wb", encoding="utf-8") as f:
+            f.write(buf.getvalue())
+
+        try:
+            model = _get_whisper()
+            segs, _ = model.transcribe(tmp, language="pt", vad_filter=False)
+            text = " ".join(s.text.strip().lower() for s in segs)
+
+            if any(w in text for w in ["jarvis", "jarbis", "jarvis,", "jarvis!"]):
+                return True
+        except Exception as e:
+            print(f"[FALLBACK ERROR] {e}")
+        finally:
+            try:
+                os.unlink(tmp)
+            except:
+                pass
+
+        return False
+
+    return False
 
 
 def speak_streaming(text_generator, interrupted_event: threading.Event) -> tuple[bool, str]:
