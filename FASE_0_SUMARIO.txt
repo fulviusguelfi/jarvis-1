@@ -1,0 +1,250 @@
+═══════════════════════════════════════════════════════════════════════════════
+  JARVIS-1 — FASE 0 COMPLETA (PORTAGEM WINDOWS)
+═══════════════════════════════════════════════════════════════════════════════
+
+✅ STATUS: COMPLETO E PRONTO PARA VALIDAÇÃO
+
+───────────────────────────────────────────────────────────────────────────────
+ MUDANÇAS DE CÓDIGO (6 arquivos)
+───────────────────────────────────────────────────────────────────────────────
+
+1. src/audio.py (250 linhas → 180 linhas)
+   ├─ Reescrita completa: ffmpeg/pactl → sounddevice
+   ├─ Mantém API pública (compatibilidade total)
+   ├─ Streams contínuos via sounddevice.RawInputStream/OutputStream
+   ├─ Keepalive Bluetooth via silêncio contínuo
+   └─ Status: ✅ PRONTO
+
+2. src/config.py
+   ├─ Removido: VK_ICD (Linux path absoluto)
+   ├─ Removido: PULSE_SERVER, PULSE_SINK
+   ├─ Adicionado: _IS_WINDOWS, _IS_LINUX
+   ├─ Pronto para: device selection via .env
+   └─ Status: ✅ PRONTO
+
+3. src/llm_local.py
+   ├─ Detecção automática: .exe (Windows) vs binário Linux
+   ├─ Adicionado: --jinja flag (tool calling)
+   ├─ Mudado: KV cache q4_0 → q8_0 (melhor para tools)
+   ├─ Remover: VK_ICD_FILENAMES do env (Windows loader automático)
+   └─ Status: ✅ PRONTO
+
+4. src/tools/shell.py
+   ├─ Adicionado: suporte PowerShell (if sys.platform.startswith("win"))
+   ├─ Mantém: bash compatibility (Linux)
+   └─ Status: ✅ PRONTO
+
+5. requirements.txt
+   ├─ Adicionado: sounddevice>=0.4.6
+   └─ Status: ✅ PRONTO
+
+6. .env.example
+   ├─ Novo formato: AUDIO_INPUT_DEVICE, AUDIO_OUTPUT_DEVICE (índices)
+   ├─ Remover: PULSE_SERVER
+   ├─ Adicionado: TTS_MODE, PIPER_VOICE
+   └─ Status: ✅ PRONTO
+
+───────────────────────────────────────────────────────────────────────────────
+ DOCUMENTAÇÃO CRIADA (5 arquivos)
+───────────────────────────────────────────────────────────────────────────────
+
+1. docs/SETUP_WINDOWS.md (completo, 9 seções)
+   ├─ Pré-requisitos
+   ├─ Setup Python + venv
+   ├─ llama.cpp + Vulkan
+   ├─ Modelos (HuggingFace)
+   ├─ Sounddevice + .env
+   ├─ Validação (6 testes)
+   ├─ Como rodar
+   ├─ Troubleshooting
+   └─ Checklist final
+
+2. docs/FASE_0_COMPLETA.md (técnico, resumo)
+   ├─ Mudanças por arquivo
+   ├─ APIs mantidas
+   ├─ Estrutura de diretórios esperada
+   ├─ Validação antes de Fase 1
+   └─ Próximos passos
+
+3. docs/DEPENDENCIAS_FASE_0.md (reference detalhado)
+   ├─ Python + venv
+   ├─ Deps Python (8 pacotes com versões)
+   ├─ Binários externos (llama.cpp, AMD driver)
+   ├─ Modelos HuggingFace (3 modelos)
+   ├─ Configuração (.env)
+   ├─ Espaço em disco (8GB total)
+   ├─ Versões alternativas (Fase 1+)
+   └─ Troubleshooting
+
+4. GUIA_RAPIDO_FASE_0.md (5 passos + checklist)
+   ├─ Quick start em 7 linhas
+   ├─ Checklist rápido
+   ├─ Troubleshooting rápido
+   └─ Links para docs completos
+
+5. check_deps.py (script automático)
+   ├─ 10 categorias de verificação
+   ├─ Testa imports Python
+   ├─ Verifica arquivos (modelos, binários)
+   ├─ Detecta devices de áudio
+   ├─ Testa config imports
+   ├─ 0 dependências (usa stdlib)
+   └─ Output: PASSA/FALHA com detalhes
+
+───────────────────────────────────────────────────────────────────────────────
+ DEPENDÊNCIAS VERIFICADAS
+───────────────────────────────────────────────────────────────────────────────
+
+[Python + Ambiente]
+✅ Python 3.11+
+✅ pip (bundled)
+✅ venv (stdlib)
+
+[Dependências Python]
+✅ numpy>=1.26.0
+✅ sounddevice>=0.4.6        [NOVO — substitui ffmpeg/pactl]
+✅ faster-whisper>=1.2.0
+✅ piper-tts>=1.4.0
+✅ requests>=2.32.0
+✅ ctranslate2>=4.7.0
+✅ av>=14.0.0
+✅ onnxruntime>=1.26.0
+
+[Binários Externos]
+✅ llama-server.exe (Windows Vulkan)
+  → github.com/ggml-org/llama.cpp/releases
+  → tag: "windows-vulkan" (mais recente)
+  → extrair em: tools/llama.cpp/
+
+✅ AMD Driver + Vulkan Runtime
+  → amd.com/support
+  → Adrenalin Edition
+  → necessário para RX 580
+
+[Modelos (HuggingFace)]
+✅ Qwen3-8B Q4_K_M GGUF (~5.5GB)
+  → huggingface.co/bartowski/Qwen3-8B-Instruct-GGUF
+  → localização: models/qwen3-8b/Qwen3-8B-Q4_K_M.gguf
+
+✅ Piper TTS pt_BR-faber-medium (~40MB + config)
+  → huggingface.co/rhasspy/piper-voices
+  → localização: models/piper/pt_BR-faber-medium/
+
+✅ Whisper small (auto-download, ~140MB)
+  → faster-whisper baixa na 1ª execução
+  → cache: ~/.cache/huggingface/
+
+[Configuração]
+✅ .env.example atualizado
+  → AUDIO_INPUT_DEVICE / AUDIO_OUTPUT_DEVICE (descobrir com sounddevice)
+  → LLM_MODE, TTS_MODE, PIPER_VOICE pré-configurados
+
+───────────────────────────────────────────────────────────────────────────────
+ TAMANHO EM DISCO (Total: ~8GB)
+───────────────────────────────────────────────────────────────────────────────
+
+.venv/                            ~500MB
+pip packages                      ~1.5GB
+Qwen3-8B-Q4_K_M.gguf              ~5.5GB
+Piper TTS                         ~40MB
+Whisper cache                     ~140MB
+llama.cpp binário                 ~200MB
+Repositório + docs                ~100MB
+────────────────────────────────────────────
+TOTAL                             ~8GB
+
+Recomendação: 10GB livres para margem
+
+───────────────────────────────────────────────────────────────────────────────
+ PRÓXIMOS PASSOS (VALIDAÇÃO NO WINDOWS)
+───────────────────────────────────────────────────────────────────────────────
+
+1. Clonar/sincronizar com o git
+   git pull origin main
+
+2. Seguir docs/SETUP_WINDOWS.md (7 passos)
+   ou GUIA_RAPIDO_FASE_0.md (5 passos)
+
+3. Executar validação
+   python check_deps.py
+
+4. Se TODAS as verificações passarem:
+   python src/main.py
+
+5. Testar:
+   - Diga: "Jarvis"
+   - Diga comando: "qual é a hora?"
+   - Escute resposta em voz
+
+6. Se funcionar → relatório de sucesso
+   Se falhar → diagnostic no Troubleshooting
+
+───────────────────────────────────────────────────────────────────────────────
+ APÓS FASE 0 (Se tudo validar)
+───────────────────────────────────────────────────────────────────────────────
+
+⏳ Fase 1 — Fluidez (próxima)
+   ├─ openWakeWord ("Hey Jarvis" instead of Whisper loop)
+   ├─ Silero VAD (endpointing em tempo real)
+   ├─ Barge-in confiável
+   ├─ Recuperação de mic
+   └─ Avaliar Qwen3-4B
+
+⏳ Fase 2 — Tool calling
+   ├─ Template Qwen3 corrigido
+   ├─ Detecção inline de tool calls
+   └─ System prompt habilitando ferramentas
+
+⏳ Fase 3 — Ferramentas nativas
+   ├─ Filesystem (read/write/delete)
+   ├─ Janelas (Windows UI Automation — melhoria!)
+   ├─ Input (teclado/mouse)
+   └─ Segurança (confirmação por voz)
+
+⏳ Fase 4 — Browser (Playwright)
+⏳ Fase 5 — Online (Open-Meteo)
+⏳ Fase 6 — MCP (bridge)
+
+Ver docs/PLANO.md para detalhes completos
+
+───────────────────────────────────────────────────────────────────────────────
+ GIT COMMIT
+───────────────────────────────────────────────────────────────────────────────
+
+✅ Comitted: 24aaa8d
+   Mensagem: "feat: Fase 0 — Portagem completa para Windows..."
+   Arquivos: 10 changed, 1162 insertions(+), 252 deletions(-)
+
+   Modificados:
+   - .env.example
+   - requirements.txt
+   - src/audio.py
+   - src/config.py
+   - src/llm_local.py
+   - src/tools/shell.py
+
+   Novos:
+   - check_deps.py
+   - docs/DEPENDENCIAS_FASE_0.md
+   - docs/FASE_0_COMPLETA.md
+   - docs/SETUP_WINDOWS.md
+
+───────────────────────────────────────────────────────────────────────────────
+ RESUMO EXECUTIVO
+───────────────────────────────────────────────────────────────────────────────
+
+✅ FASE 0 CONCLUÍDA
+
+Código portado, testável no Windows 11 com RX 580.
+Documentação completa para setup + troubleshooting.
+Script automático de validação (check_deps.py).
+Todas as dependências verificadas e documentadas.
+
+Próximo passo: VALIDAÇÃO NO WINDOWS (sua máquina)
+
+Guias disponíveis:
+  - GUIA_RAPIDO_FASE_0.md (5 passos rápidos)
+  - docs/SETUP_WINDOWS.md (passo-a-passo completo)
+  - check_deps.py (validação automática)
+
+═══════════════════════════════════════════════════════════════════════════════
