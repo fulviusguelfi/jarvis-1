@@ -9,9 +9,11 @@ numpy>=1.26.0
 sounddevice>=0.4.6
 # kokoro-onnx>=0.5.0  # TTS legado (lento), só se TTS_MODE=kokoro
 
-# --- Fase agêntica (planejado — ver docs/PLANO.md) ---
-# openwakeword   # wake word "Hey Jarvis" (ONNX)
-# silero-vad     # endpointing + barge-in (ONNX)
+# --- Fase 1 (Fluidez) — implementado ---
+openwakeword>=0.6.0    # wake word "Hey Jarvis" (ONNX)
+silero-vad>=1.0.0      # endpointing + barge-in (ONNX)
+
+# --- Fases futuras (planejado — ver docs/PLANO.md) ---
 # pynput         # automação teclado/mouse X11 (XTEST)
 # EWMHlib        # controle de janelas X11/KDE
 # mss            # screenshot
