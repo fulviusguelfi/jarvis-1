@@ -1,4 +1,8 @@
+import sys
+
 from tools.shell import run_shell
+
+_SHELL_NAME = "PowerShell" if sys.platform.startswith("win") else "bash"
 
 TOOL_HANDLERS = {
     "run_shell": run_shell,
@@ -15,7 +19,7 @@ TOOL_DEFINITIONS = [
                 "properties": {
                     "command": {
                         "type": "string",
-                        "description": "O comando shell a executar (bash)."
+                        "description": f"O comando shell a executar ({_SHELL_NAME})."
                     }
                 },
                 "required": ["command"]

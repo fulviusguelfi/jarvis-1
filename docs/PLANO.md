@@ -49,7 +49,7 @@ Pacotes a instalar via pip: `openwakeword`, `silero-vad`, `pynput`, `EWMHlib`, `
 - **Pipeline sobreposto:** manter o streaming sentença-a-sentença de `speak_streaming` ([main.py:139](src/main.py#L139)); garantir 1º fonema assim que a 1ª cláusula fecha.
 - **Barge-in confiável:** trocar o VAD-RMS de `mic_vad_background` ([audio.py:288](src/audio.py#L288)) pelo Silero VAD — distingue voz de ruído do Jabra (o que matou o barge-in antes). Reativar interrupção durante a fala.
 - **Robustez de áudio (embutida):** `read_mic_chunk` devolve silêncio quando o stream morre ([audio.py:43-47](src/audio.py#L43-L47)) → detectar mic morto, reconectar e **avisar com som** em vez de surdez calada.
-- **Avaliar Qwen3-4B:** baixar `Qwen3-4B-Instruct-2507-Q4_K_M`; comparar feel (tok/s, latência ao 1º áudio) vs 8B no uso real; registrar decisão em `project_jarvis1_context`. (0.6B já baixado serve só de referência de teto de velocidade.)
+- **Avaliar Qwen3-4B Q8_0:** baixar `Qwen3-4B-Instruct-2507-Q8_0` (não Q4_K_M). **Justificativa:** R2 (KV q4_0 degrada tool calling) + R3 (4B Q4 piora em tool calls) → **4B em Q8_0 é mais rápido que 8B Q4_K_M** (metade do tamanho) **sem degradar tool calling**. Cabe em VRAM: ~3GB pesos + <500MB KV. Comparar tok/s vs 8B no uso real; registrar decisão em `project_jarvis1_context`. (0.6B já baixado serve só de referência de teto de velocidade.)
 
 ### Fase 2 — Fundação do tool calling
 - [src/llm_local.py:44-58](src/llm_local.py#L44-L58): `--cache-type-k/v q4_0` → `q8_0`; adicionar `--chat-template-file` apontando p/ template Qwen3-tools corrigido (commitado em `tools/templates/qwen3_tools.jinja`); `--jinja` explícito.

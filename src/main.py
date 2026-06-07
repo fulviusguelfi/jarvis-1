@@ -19,8 +19,6 @@ from audio import (
     mic_vad_background,
     start_bt_keepalive,
     stop_bt_keepalive,
-    PULSE_SINK,
-    _ffmpeg_env,
 )
 from config import AUDIO_SAMPLE_RATE
 from stt import transcribe, _get_model as _get_whisper
@@ -84,12 +82,7 @@ def _say_dismiss():
 
 
 def _check_mic() -> bool:
-    """Verifica se o mic está capturando. Tenta forçar ativação se silencioso."""
-    import subprocess as _sp
-    from audio import _ffmpeg_env
-    # Força source a sair do IDLE
-    _sp.run(["pactl", "suspend-source", "default", "false"],
-            env=_ffmpeg_env, capture_output=True)
+    """Verifica se o mic está capturando. Avisa se silencioso."""
     pcm = read_mic_chunk(1.0)
     peak = np.max(np.abs(np.frombuffer(pcm, dtype=np.int16).astype(np.float32))) / 32768
     peak_db = 20 * np.log10(peak + 1e-9)
@@ -242,11 +235,6 @@ def main():
 
         if not listen_for_wakeword():
             _idle_chunks += 1
-            if _idle_chunks % 10 == 0:
-                # A cada 25s sem detecção, força mic a acordar
-                import subprocess as _sp
-                _sp.run(["pactl", "suspend-source", "default", "false"],
-                        env=_ffmpeg_env, capture_output=True)
             continue
         _idle_chunks = 0
 

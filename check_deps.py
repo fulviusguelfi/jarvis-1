@@ -15,18 +15,10 @@ checks_failed = 0
 
 def check(name: str, condition: bool, details: str = "") -> None:
     global checks_passed, checks_failed
-    status = "✓" if condition else "✗"
-    color = "\033[92m" if condition else "\033[91m"
-    reset = "\033[0m"
-
-    if sys.platform.startswith("win"):
-        status_str = f"[{status}]" if condition else "[X]"
-    else:
-        status_str = f"{color}{status}{reset}"
-
-    print(f"{status_str} {name}")
+    status_str = "[OK]" if condition else "[FAIL]"
+    print("{} {}".format(status_str, name))
     if details:
-        print(f"    → {details}")
+        print("    {}".format(details))
 
     if condition:
         checks_passed += 1
@@ -100,18 +92,17 @@ env_file = os.path.join(BASE_DIR, ".env")
 check(
     ".env arquivo",
     os.path.exists(env_file),
-    "Copie .env.example → .env e preencha com índices de áudio"
+    "Copie .env.example para .env"
 )
 
 if os.path.exists(env_file):
-    with open(env_file) as f:
+    with open(env_file, encoding="utf-8") as f:
         env_vars = {line.split("=")[0].strip(): line.split("=")[1].strip()
                    for line in f if "=" in line and not line.startswith("#")}
 
     check("LLM_MODE definido", "LLM_MODE" in env_vars)
     check("TTS_MODE definido", "TTS_MODE" in env_vars)
-    check("AUDIO_INPUT_DEVICE definido", "AUDIO_INPUT_DEVICE" in env_vars)
-    check("AUDIO_OUTPUT_DEVICE definido", "AUDIO_OUTPUT_DEVICE" in env_vars)
+    # Áudio usa sempre o dispositivo padrão do SO — sem índices no .env.
 
 # 8. Áudio (sounddevice)
 print("\n[Áudio (sounddevice)]")
@@ -151,9 +142,9 @@ print("\n" + "=" * 60)
 print(f"RESULTADO: {checks_passed} OK, {checks_failed} FALHAS")
 
 if checks_failed == 0:
-    print("\n✓ Ambiente pronto! Execute: python src/main.py")
+    print("\n[OK] Ambiente pronto! Execute: python src/main.py")
     sys.exit(0)
 else:
-    print(f"\n✗ {checks_failed} verificação(ões) falharam.")
+    print("\n[FAIL] {} verificacoes falharam.".format(checks_failed))
     print("  Ver detalhes acima.")
     sys.exit(1)

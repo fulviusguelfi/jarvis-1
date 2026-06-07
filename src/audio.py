@@ -7,21 +7,20 @@ import sounddevice as sd
 import wave
 from config import AUDIO_SAMPLE_RATE, AUDIO_CHANNELS, AUDIO_RECORD_SECONDS
 
-_AUDIO_INPUT_DEVICE = int(os.environ.get("AUDIO_INPUT_DEVICE", "-1"))
-_AUDIO_OUTPUT_DEVICE = int(os.environ.get("AUDIO_OUTPUT_DEVICE", "-1"))
+# Áudio sempre no dispositivo padrão do SO: não passamos `device=`, então o
+# sounddevice usa sd.default.device, que o PortAudio resolve para o default do SO.
 
-_mic_stream: sd.RawInputStream | None = None
-_out_stream: sd.RawOutputStream | None = None
+_mic_stream: sd.InputStream | None = None
+_out_stream: sd.OutputStream | None = None
 _stream_lock = threading.Lock()
 
 
-def _get_mic_stream() -> sd.RawInputStream:
-    """Mantém um stream contínuo de mic aberto."""
+def _get_mic_stream() -> sd.InputStream:
+    """Mantém um stream contínuo de mic aberto (dispositivo padrão do SO)."""
     global _mic_stream
     with _stream_lock:
         if _mic_stream is None or _mic_stream.closed:
-            _mic_stream = sd.RawInputStream(
-                device=_AUDIO_INPUT_DEVICE if _AUDIO_INPUT_DEVICE >= 0 else None,
+            _mic_stream = sd.InputStream(
                 samplerate=AUDIO_SAMPLE_RATE,
                 channels=AUDIO_CHANNELS,
                 dtype=np.int16,
@@ -31,13 +30,12 @@ def _get_mic_stream() -> sd.RawInputStream:
         return _mic_stream
 
 
-def _get_out_stream() -> sd.RawOutputStream:
-    """Mantém stream de saída aberto (keepalive para Bluetooth)."""
+def _get_out_stream() -> sd.OutputStream:
+    """Mantém stream de saída aberto (keepalive para Bluetooth, device padrão do SO)."""
     global _out_stream
     with _stream_lock:
         if _out_stream is None or _out_stream.closed:
-            _out_stream = sd.RawOutputStream(
-                device=_AUDIO_OUTPUT_DEVICE if _AUDIO_OUTPUT_DEVICE >= 0 else None,
+            _out_stream = sd.OutputStream(
                 samplerate=22050,
                 channels=AUDIO_CHANNELS,
                 dtype=np.int16,
@@ -156,7 +154,7 @@ def play(wav_path: str) -> None:
     """Toca um arquivo WAV."""
     with wave.open(wav_path, "rb") as wf:
         data = np.frombuffer(wf.readframes(wf.getnframes()), dtype=np.int16)
-    sd.play(data, AUDIO_SAMPLE_RATE, device=_AUDIO_OUTPUT_DEVICE if _AUDIO_OUTPUT_DEVICE >= 0 else None)
+    sd.play(data, AUDIO_SAMPLE_RATE)
     sd.wait()
 
 
@@ -193,7 +191,7 @@ def stop_bt_keepalive() -> None:
 
 def play_samples(samples: np.ndarray, sample_rate: int) -> None:
     """Toca array numpy."""
-    sd.play(samples, sample_rate, device=_AUDIO_OUTPUT_DEVICE if _AUDIO_OUTPUT_DEVICE >= 0 else None)
+    sd.play(samples, sample_rate)
     sd.wait()
 
 

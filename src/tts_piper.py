@@ -59,7 +59,7 @@ def synthesize(text: str, speed: float = 1.0) -> tuple[np.ndarray, int]:
     buf.seek(44)  # pular header WAV
     raw = buf.read()
     samples = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
-    print(f"[TTS-Piper] {len(text)} chars → {len(samples)/rate:.1f}s de áudio")
+    print("[TTS-Piper] {} chars -> {:.1f}s de audio".format(len(text), len(samples)/rate))
     return samples, rate
 
 

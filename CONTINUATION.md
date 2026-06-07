@@ -59,7 +59,7 @@ AMD Ryzen 5 4500 · 16GB RAM · **Radeon RX 580 8GB**. No Windows o RX 580 roda 
 | Pasta | Modelo | Uso |
 |---|---|---|
 | `models\qwen3-8b\Qwen3-8B-Q4_K_M.gguf` | Qwen3-8B Q4_K_M GGUF | LLM atual |
-| `models\qwen3-4b\` (plano) | Qwen3-4B-Instruct-2507 Q4_K_M GGUF | eval de velocidade |
+| `models\qwen3-4b\` (plano) | Qwen3-4B-Instruct-2507 Q8_0 GGUF | eval de velocidade (4B Q8_0 > 8B Q4 para tool calling) |
 | `models\piper\` | Piper `pt_BR-faber-medium` (.onnx + .json) | TTS |
 | (auto) | faster-whisper `small` | STT (baixa no 1º uso) |
 | (plano) | openWakeWord `hey_jarvis` + Silero VAD (ONNX) | wake word + VAD |
