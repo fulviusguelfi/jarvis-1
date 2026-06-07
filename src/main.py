@@ -24,6 +24,7 @@ from audio import (
 from config import AUDIO_SAMPLE_RATE
 from stt import transcribe, _get_model as _get_whisper
 from wake import detect_wake_word  # F1.1: openWakeWord
+from mic_health import monitor_mic_health, play_mic_dead_notification  # F1.4: Mic health
 if TTS_MODE == "qwen3":
     from tts_qwen3 import synthesize
 elif TTS_MODE == "piper":
@@ -252,6 +253,12 @@ def main():
 
     # Mantem headset BT acordado com silencio continuo
     start_bt_keepalive()
+
+    # F1.4: Monitorar saude do mic (detectar desconexao Jabra)
+    mic_monitor_stop = monitor_mic_health(
+        check_interval=5.0,
+        on_mic_dead_callback=play_mic_dead_notification
+    )
 
     print("Pronto. Aguardando wake word 'Jarvis'...\n")
 
