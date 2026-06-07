@@ -23,6 +23,7 @@ from audio import (
 )
 from config import AUDIO_SAMPLE_RATE
 from stt import transcribe, _get_model as _get_whisper
+from wake import detect_wake_word  # F1.1: openWakeWord
 if TTS_MODE == "qwen3":
     from tts_qwen3 import synthesize
 elif TTS_MODE == "piper":
@@ -72,7 +73,7 @@ class JarvisFSM:
 # Constantes e funções auxiliares
 # ============================================================================
 
-WAKE_WORDS = {"jarvis", "jarbis", "jarvis,", "jarvis!"}  # variações de pronúncia
+# WAKE_WORDS removido: F1.1 usa openWakeWord modelo (hey_jarvis.onnx)
 
 DISMISS_PHRASES = {
     "obrigado jarvis", "obrigado, jarvis", "valeu jarvis", "valeu, jarvis",
@@ -138,37 +139,18 @@ def _check_mic() -> bool:
     return True
 
 
-def listen_for_wakeword() -> bool:
+def listen_for_wakeword_chunk() -> bool:
     """
-    Le chunk do stream continuo e verifica se 'jarvis' foi dito.
-    Usa stream continuo para manter o mic sempre ativo.
-    Retorna True se wake word detectada.
+    Lê chunk de audio (80ms @ 16kHz) e detecta "Hey Jarvis" com openWakeWord.
 
-    [F1.1 openWakeWord] Substitui esta funcao por modelo dedicado.
+    F1.1: substituiu Whisper (que alucina) por modelo classificador dedicado.
+    Agora retorna rapidamente (< 50ms) com score deterministico (0-1).
     """
-    import tempfile, wave as _wave, io
-    pcm = read_mic_chunk(WAKE_CHUNK_SECS)
+    import numpy as np
 
-    buf = io.BytesIO()
-    with _wave.open(buf, "w") as wf:
-        wf.setnchannels(1)
-        wf.setsampwidth(2)
-        wf.setframerate(AUDIO_SAMPLE_RATE)
-        wf.writeframes(pcm)
-    buf.seek(0)
-
-    tmp = tempfile.mktemp(suffix=".wav")
-    with open(tmp, "wb") as f:
-        f.write(buf.getvalue())
-
-    model = _get_whisper()
-    segs, _ = model.transcribe(tmp, language="pt", vad_filter=False)
-    text = " ".join(s.text.strip().lower() for s in segs)
-    os.unlink(tmp)
-
-    if any(w in text for w in WAKE_WORDS):
-        return True
-    return False
+    pcm = read_mic_chunk(0.08)  # 80ms exato para openWakeWord
+    audio_int16 = np.frombuffer(pcm, dtype=np.int16)
+    return detect_wake_word(audio_int16, sample_rate=AUDIO_SAMPLE_RATE)
 
 
 def speak_streaming(text_generator, interrupted_event: threading.Event) -> tuple[bool, str]:
@@ -292,7 +274,7 @@ def main():
         if fsm.get_state() == JarvisState.IDLE:
             print(" ouvindo... ", end="", flush=True)
 
-            if listen_for_wakeword():
+            if listen_for_wakeword_chunk():
                 fsm.transition(JarvisState.ACTIVATED, "wake word detectada")
             else:
                 continue
