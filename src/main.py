@@ -142,54 +142,16 @@ def _check_mic() -> bool:
 
 def listen_for_wakeword_chunk() -> bool:
     """
-    Detecta wake word: tenta openWakeWord, fallback para Whisper.
+    Detecta "Hey Jarvis" com openWakeWord (F1.1).
 
-    F1.1: openWakeWord se disponível (< 50ms, determinístico).
-    Fallback: Whisper se openWakeWord falhar (v0.1.0 mode).
+    DETERMINÍSTICO: Falha com erro claro se modelo não está disponível.
+    NÃO usa fallback invisível — exige hey_jarvis.onnx presente.
     """
     import numpy as np
-    import tempfile
-    import wave as _wave
-    import io
 
-    pcm = read_mic_chunk(2.5)  # janela maior para Whisper fallback
-
-    # Tentar openWakeWord primeiro (rápido, 80ms)
-    audio_int16_chunk = np.frombuffer(pcm[:int(16000 * 0.08 * 2)], dtype=np.int16)
-    if detect_wake_word(audio_int16_chunk, sample_rate=AUDIO_SAMPLE_RATE):
-        return True
-
-    # Fallback: Whisper (v0.1.0 mode) — se openWakeWord não detectou
+    pcm = read_mic_chunk(0.08)  # 80ms exato para openWakeWord
     audio_int16 = np.frombuffer(pcm, dtype=np.int16)
-    buf = io.BytesIO()
-    with _wave.open(buf, "w") as wf:
-        wf.setnchannels(1)
-        wf.setsampwidth(2)
-        wf.setframerate(AUDIO_SAMPLE_RATE)
-        wf.writeframes(audio_int16.tobytes())
-    buf.seek(0)
-
-    tmp = tempfile.mktemp(suffix=".wav")
-    with open(tmp, "wb", encoding="utf-8") as f:
-        f.write(buf.getvalue())
-
-    try:
-        model = _get_whisper()
-        segs, _ = model.transcribe(tmp, language="pt", vad_filter=False)
-        text = " ".join(s.text.strip().lower() for s in segs)
-
-        # Verificar se "jarvis" aparece em qualquer variação
-        if any(w in text for w in ["jarvis", "jarbis", "jarvis,", "jarvis!"]):
-            return True
-    except Exception as e:
-        print(f"[wake] erro no Whisper fallback: {e}")
-    finally:
-        try:
-            os.unlink(tmp)
-        except:
-            pass
-
-    return False
+    return detect_wake_word(audio_int16, sample_rate=AUDIO_SAMPLE_RATE)
 
 
 def speak_streaming(text_generator, interrupted_event: threading.Event) -> tuple[bool, str]:

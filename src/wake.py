@@ -1,50 +1,55 @@
 """OpenWakeWord - deteccao de wake word dedicado com Silero VAD integrado.
 
-F1.1: Com fallback para Whisper se openWakeWord nao estiver disponivel.
+F1.1: DETERMINÍSTICO — exige hey_jarvis.onnx presente. Sem fallback invisível.
 """
 import numpy as np
 from pathlib import Path
 
 # Lazy load para nao crashear se openWakeWord nao estiver instalado
 _model = None
-_fallback_cached = False  # Cache se ja tentamos e fallback foi necessario
 _sample_rate = 16000
 
 
 def _get_model():
-    """Carrega o modelo openWakeWord hey_jarvis (lazy load com cache).
+    """Carrega o modelo openWakeWord hey_jarvis (lazy load).
 
-    Retorna None em fallback (modelo nao encontrado ou nao instalado).
-    Cache evita logs repetidos a cada frame.
+    FALHA COM ERRO CLARO se modelo não existe.
+    Sem fallback invisível — usuário precisa baixar hey_jarvis.onnx.
     """
-    global _model, _fallback_cached
-
-    # Se ja tentamos e fallback foi necessario, retorna None sem loggar
-    if _fallback_cached:
-        return None
-
+    global _model
     if _model is not None:
         return _model
 
     try:
         from openwakeword.model import Model
     except ImportError:
-        _fallback_cached = True
-        print("[wake] openWakeWord nao instalado — fallback para Whisper")
-        return None
+        raise ImportError(
+            "openWakeWord nao instalado. Execute: pip install openwakeword"
+        )
 
     # Caminho relativo ao diretorio src/
     model_dir = Path(__file__).parent.parent / "models" / "openWakeWord"
     model_path = model_dir / "hey_jarvis.onnx"
 
     if not model_path.exists():
-        _fallback_cached = True
-        print(f"[wake] Modelo hey_jarvis.onnx nao encontrado")
-        print("[wake] Fallback para Whisper (baixe o modelo para ativar openWakeWord)")
-        return None
+        raise FileNotFoundError(
+            f"\n"
+            f"[ERRO CRÍTICO] Modelo hey_jarvis.onnx nao encontrado!\n"
+            f"\n"
+            f"Caminho esperado: {model_path}\n"
+            f"\n"
+            f"SOLUÇÃO:\n"
+            f"1. Baixe de: https://github.com/dscripka/openWakeWord/releases\n"
+            f"   Procure por: hey_jarvis.onnx (v0.6.0+)\n"
+            f"2. Crie o diretorio: {model_dir}\n"
+            f"3. Coloque o arquivo lá\n"
+            f"4. Tente novamente\n"
+            f"\n"
+            f"F1.1 exige openWakeWord funcionando. Sem fallback invisível.\n"
+        )
 
     try:
-        # Inicializar modelo com VAD nativo + Speex suppression (melhor em ruido BT)
+        # Inicializar modelo com VAD nativo + Speex suppression
         _model = Model(
             wakeword_models=[str(model_path)],
             inference_framework="onnx",
@@ -54,46 +59,45 @@ def _get_model():
         print("[wake] openWakeWord hey_jarvis carregado com sucesso")
         return _model
     except Exception as e:
-        _fallback_cached = True
-        print(f"[wake] Erro ao carregar modelo: {e}")
-        print("[wake] Fallback para Whisper")
-        return None
+        raise RuntimeError(
+            f"[ERRO] Nao conseguiu carregar modelo openWakeWord: {e}\n"
+            f"Verifique se o arquivo {model_path} é válido.\n"
+        )
 
 
 def detect_wake_word(audio_frames: np.ndarray, sample_rate: int = 16000) -> bool:
     """
-    Detecta "Hey Jarvis" em frames de audio com openWakeWord.
-    Retorna False em fallback (modelo nao disponivel).
+    Detecta "Hey Jarvis" com openWakeWord (F1.1).
+
+    DETERMINÍSTICO: Retorna bool ou falha com exceção clara.
+    Sem fallback invisível para Whisper.
 
     Args:
         audio_frames: numpy array de audio (mono, int16 ou float32)
-        sample_rate: sample rate (padrao 16kHz)
+        sample_rate: taxa de amostragem (padrao 16kHz)
 
     Returns:
-        True se detectado com confianca > limiar
-    """
-    model = _get_model()
+        True se "Hey Jarvis" detectado com confianca > limiar
 
-    # Fallback: se modelo nao disponivel, retorna False
-    # (main.py volta a usar listen_for_wakeword_original que usa Whisper)
-    if model is None:
-        return False
+    Raises:
+        FileNotFoundError: Se modelo hey_jarvis.onnx nao encontrado
+        RuntimeError: Se modelo nao conseguir carregar
+    """
+    model = _get_model()  # Falha com erro claro se nao existe
 
     # Normalizar para float32 [-1, 1] se int16
     if audio_frames.dtype == np.int16:
         audio_frames = audio_frames.astype(np.float32) / 32768.0
 
     # openWakeWord espera frames de ~80ms a 16kHz = 1280 samples
-    frame_size = int(sample_rate * 0.08)  # 80ms @ 16kHz = 1280 samples
+    frame_size = int(sample_rate * 0.08)
 
     # Processar frame unico
     if len(audio_frames) < frame_size:
-        # Pad com zeros se frame eh muito pequeno
         audio_frames = np.pad(
             audio_frames, (0, frame_size - len(audio_frames)), mode="constant"
         )
     elif len(audio_frames) > frame_size:
-        # Truncar
         audio_frames = audio_frames[:frame_size]
 
     try:
@@ -106,16 +110,15 @@ def detect_wake_word(audio_frames: np.ndarray, sample_rate: int = 16000) -> bool
         # Limiar: 0.6 como balance entre falsos positivos e falsos negativos
         return hey_jarvis_score > 0.6
     except Exception as e:
-        print(f"[wake] erro ao rodar modelo: {e}")
-        return False
+        raise RuntimeError(
+            f"[ERRO] Erro ao rodar openWakeWord: {e}\n"
+            f"O modelo pode estar corrompido. Tente baixar novamente.\n"
+        )
 
 
 def get_score(audio_frames: np.ndarray, sample_rate: int = 16000) -> float:
     """Retorna score bruto do modelo (0-1) para debug."""
     model = _get_model()
-
-    if model is None:
-        return 0.0
 
     if audio_frames.dtype == np.int16:
         audio_frames = audio_frames.astype(np.float32) / 32768.0
