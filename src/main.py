@@ -142,7 +142,7 @@ def _check_mic() -> bool:
 
 def listen_for_wakeword_chunk() -> bool:
     """
-    Detecta wake word: tenta openWakeWord, fallback Whisper se modelo falhar.
+    Detecta wake word: tenta openWakeWord, fallback Whisper se falhar.
 
     DETERMINÍSTICO: Avisa EXPLICITAMENTE qual modo está usando.
     """
@@ -158,8 +158,8 @@ def listen_for_wakeword_chunk() -> bool:
     try:
         if detect_wake_word(audio_int16_chunk, sample_rate=AUDIO_SAMPLE_RATE):
             return True
-    except (FileNotFoundError, RuntimeError) as e:
-        # Modelo não existe ou está corrompido
+    except (FileNotFoundError, RuntimeError, ImportError) as e:
+        # Modelo não existe, está corrompido, ou biblioteca não instalada
         print(f"\n[FALLBACK] openWakeWord indisponível: {type(e).__name__}")
         print("[FALLBACK] Usando Whisper como wake word (v0.1.0 mode)\n")
 
