@@ -31,6 +31,8 @@ alucinação. Esta é a fase que faz o Jarvis "funcionar bem pra caramba" no dia
   - [ ] Features seguintes plugam na FSM sem reescrevê-la
 
 ### F1.1 — `feat/owww-wake` · Wake word dedicado (openWakeWord)
+- **Decisão (2026-06-07):** wake word = **"Hey Jarvis"** (modelo pré-treinado `hey_jarvis.onnx`).
+  Treinar "jarvis" custom fica como melhoria futura, não bloqueia a Fase 1.
 - **Substitui:** o loop Whisper-de-2.5s em `listen_for_wakeword()` (`main.py`).
 - **Por quê:** openWakeWord é **classificador** (saída 0–1), não gera texto → **elimina** a
   alucinação de wake word (RSK01) por construção.
