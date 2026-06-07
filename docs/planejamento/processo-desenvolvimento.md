@@ -8,6 +8,7 @@
 ---
 
 ## Sumário
+0. [Ritual de Início de Fase](#kickoff)
 1. [Filosofia](#filosofia)
 2. [Agentes de Desenvolvimento](#agentes)
 3. [Convenções](#convencoes)
@@ -16,6 +17,32 @@
 6. [Política de Logging](#logging)
 7. [Release Management](#release)
 8. [Risk Registry](#riscos)
+
+---
+
+## 0. Ritual de Início de Fase {#kickoff}
+
+> **Regra de processo (obrigatória).** Nenhuma fase começa a codar antes de ser **adaptada a este
+> modelo**. O PLANO.md descreve a *intenção* da fase; o ritual abaixo a converte em backlog
+> executável e coerente com o resto do projeto. Conduzido pelo `project-owner` + `architect`.
+
+Ao iniciar a Fase N:
+1. **Reler o PLANO.md** da fase e confrontar com o estado real do código (o que já existe / mudou).
+2. **Análise de adequação:** a fase ainda faz sentido dado o que aprendemos nas fases anteriores?
+   Há decisão nova (ex.: pesquisa, correção de modelo) que altera o escopo? Registrar desvios.
+3. **Coerência com o resto do projeto:** a fase prepara o que as fases seguintes assumem? Não
+   antecipa nem deixa buraco? Dependências entre fases explicitadas.
+4. **Design estrutural único (architect):** decidir UMA vez a estrutura-alvo que as features da fase
+   vão compartilhar (ex.: máquina de estados do `main.py`), para as features plugarem nela em vez de
+   cada uma reescrever o mesmo código.
+5. **Fatiar em features** `feat/<nome>` com DOR/DOD, encadeadas por dependência (atualizar
+   `roadmap-features.md`).
+6. **Revisar o Risk Registry** (§8): quais RSK esta fase toca? Mitigação ativa para cada um.
+7. **Confirmar decisões de UX/escopo com o usuário** antes de codar (não decidir sozinho).
+8. Só então: `git checkout develop && git checkout -b feat/<primeira-feature>`.
+
+O resultado do ritual é um **Relatório de Status da Fase** (formato no `project-owner`) aprovado
+antes da primeira linha de código.
 
 ---
 

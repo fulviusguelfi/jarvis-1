@@ -19,6 +19,17 @@ alucinação. Esta é a fase que faz o Jarvis "funcionar bem pra caramba" no dia
 
 **Ordem das features (encadeadas por dependência):**
 
+### F1.0 — `feat/state-machine` · Máquina de estados do loop (design único — architect)
+- **Por quê:** F1.1/F1.2/F1.4 todas mexem no loop de `main.py`. Sem uma estrutura-alvo definida
+  ANTES, cada feature reescreve o loop → churn e bugs. Decidir uma vez (ritual de início de fase §4).
+- **Entrega:** refatorar `main.py` para FSM explícita `IDLE → ESCUTANDO → PENSANDO → FALANDO`
+  (com transição de barge-in FALANDO→ESCUTANDO), com pontos de extensão limpos para wake/VAD/TTS.
+- **DOR:** Fase 1 iniciada; comportamento atual da v0.1.0 mapeado.
+- **DOD:**
+  - [ ] FSM substitui o loop atual sem regressão (conversa real igual à v0.1.0)
+  - [ ] Estados e transições logados (`[STATE] IDLE -> ESCUTANDO`)
+  - [ ] Features seguintes plugam na FSM sem reescrevê-la
+
 ### F1.1 — `feat/owww-wake` · Wake word dedicado (openWakeWord)
 - **Substitui:** o loop Whisper-de-2.5s em `listen_for_wakeword()` (`main.py`).
 - **Por quê:** openWakeWord é **classificador** (saída 0–1), não gera texto → **elimina** a
@@ -71,9 +82,20 @@ alucinação. Esta é a fase que faz o Jarvis "funcionar bem pra caramba" no dia
   - [ ] Decisão registrada em `docs/memory/project_jarvis1_context.md`
   - [ ] Modelo escolhido configurado por default
 
-**DOD da FASE 1 (gate para `v0.2.0`):** ativar com "Hey Jarvis" é instantâneo; resposta começa
+**Verificar (não é feature nova — já implementado na v0.1.0):** *pipeline sobreposto* — o
+streaming sentença-a-sentença de `speak_streaming` deve continuar funcionando (1º fonema assim que
+a 1ª cláusula fecha). Confirmar que a FSM (F1.0) preserva isso.
+
+**Alinhamento com o resto do projeto:**
+- F1.5 (escolha 4B-Q8 vs 8B-Q4) **alimenta a Fase 2**: o template de tool calling e o KV q8_0 serão
+  aplicados ao modelo escolhido aqui. Por isso a decisão fecha a Fase 1, antes da Fase 2 começar.
+- A FSM (F1.0) é a fundação sobre a qual Fases 3–6 (tools/browser/online) plugam novos estados.
+- **Desvio consciente do PLANO.md:** F1.3 (pós-filtro anti-alucinação) não está no PLANO original —
+  foi adicionado a partir de `WHISPER_SILENCE_ANALYSIS.md` como defesa em profundidade. Justificado.
+
+**DOD da FASE 1 (gate para `v0.2.0`):** ativar com a wake word é instantâneo; resposta começa
 < 1s após parar de falar; barge-in funciona; mic morto avisa; **zero alucinação em silêncio**;
-4B vs 8B comparado e decidido. → merge `develop→main`, tag `v0.2.0`.
+pipeline sobreposto preservado; 4B vs 8B comparado e decidido. → merge `develop→main`, tag `v0.2.0`.
 
 ---
 
