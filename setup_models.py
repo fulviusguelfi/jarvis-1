@@ -26,27 +26,25 @@ print("[1/3] Criando estrutura de diretórios...")
 print("      OK")
 
 # F1.1: openWakeWord hey_jarvis.onnx
-print("[2/3] Baixando openWakeWord hey_jarvis.onnx...")
+print("[2/3] Verificando openWakeWord hey_jarvis.onnx...")
 oww_dir = models_dir / "openWakeWord"
 oww_model = oww_dir / "hey_jarvis.onnx"
 
 if oww_model.exists():
-    print(f"      JA EXISTE: {oww_model}")
+    print(f"      [OK] JA EXISTE: {oww_model}")
+    print(f"           ({oww_model.stat().st_size / (1024*1024):.1f} MB)")
 else:
-    print("      Baixando de GitHub...")
-    oww_url = "https://github.com/dscripka/openWakeWord/releases/download/v0.6.0/hey_jarvis.onnx"
-    try:
-        with urlopen(oww_url) as response:
-            content = response.read()
-        with open(oww_model, "wb") as f:
-            f.write(content)
-        size_mb = len(content) / (1024 * 1024)
-        print(f"      OK ({size_mb:.1f} MB)")
-    except Exception as e:
-        print(f"      [ERRO] Nao conseguiu baixar: {e}")
-        print(f"      Manual: Baixe de {oww_url}")
-        print(f"      E coloque em: {oww_model}")
-        sys.exit(1)
+    print(f"      [FALTA] {oww_model}")
+    print(f"")
+    print(f"      COMO BAIXAR:")
+    print(f"      1. Visite: https://github.com/dscripka/openWakeWord")
+    print(f"      2. Procure em 'Releases' pela versão mais recente")
+    print(f"      3. Baixe o arquivo: hey_jarvis.onnx (~1 MB)")
+    print(f"      4. Crie pasta: {oww_dir}")
+    print(f"      5. Coloque lá: {oww_model}")
+    print(f"      6. Rode setup novamente")
+    print(f"")
+    sys.exit(1)
 
 # Verificar dependências Python
 print("[3/3] Verificando dependências...")
