@@ -7,21 +7,29 @@ from pathlib import Path
 
 # Lazy load para nao crashear se openWakeWord nao estiver instalado
 _model = None
+_fallback_cached = False  # Cache se ja tentamos e fallback foi necessario
 _sample_rate = 16000
 
 
 def _get_model():
-    """Carrega o modelo openWakeWord hey_jarvis (lazy load).
+    """Carrega o modelo openWakeWord hey_jarvis (lazy load com cache).
 
     Retorna None em fallback (modelo nao encontrado ou nao instalado).
+    Cache evita logs repetidos a cada frame.
     """
-    global _model
+    global _model, _fallback_cached
+
+    # Se ja tentamos e fallback foi necessario, retorna None sem loggar
+    if _fallback_cached:
+        return None
+
     if _model is not None:
         return _model
 
     try:
         from openwakeword.model import Model
     except ImportError:
+        _fallback_cached = True
         print("[wake] openWakeWord nao instalado — fallback para Whisper")
         return None
 
@@ -30,7 +38,8 @@ def _get_model():
     model_path = model_dir / "hey_jarvis.onnx"
 
     if not model_path.exists():
-        print(f"[wake] Modelo hey_jarvis.onnx nao encontrado em {model_path}")
+        _fallback_cached = True
+        print(f"[wake] Modelo hey_jarvis.onnx nao encontrado")
         print("[wake] Fallback para Whisper (baixe o modelo para ativar openWakeWord)")
         return None
 
@@ -45,6 +54,7 @@ def _get_model():
         print("[wake] openWakeWord hey_jarvis carregado com sucesso")
         return _model
     except Exception as e:
+        _fallback_cached = True
         print(f"[wake] Erro ao carregar modelo: {e}")
         print("[wake] Fallback para Whisper")
         return None
