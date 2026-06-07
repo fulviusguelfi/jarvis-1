@@ -6,6 +6,7 @@ ctranslate2>=4.7.0
 onnxruntime>=1.26.0
 requests>=2.32.0
 numpy>=1.26.0
+sounddevice>=0.4.6
 # kokoro-onnx>=0.5.0  # TTS legado (lento), só se TTS_MODE=kokoro
 
 # --- Fase agêntica (planejado — ver docs/PLANO.md) ---

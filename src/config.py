@@ -1,8 +1,8 @@
 import os
+import sys
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-# Carrega .env se existir
 _env_file = os.path.join(BASE_DIR, ".env")
 if os.path.exists(_env_file):
     with open(_env_file) as _f:
@@ -14,8 +14,8 @@ if os.path.exists(_env_file):
 MODELS_DIR = os.path.join(BASE_DIR, "models")
 TOOLS_DIR = os.path.join(BASE_DIR, "tools")
 
-# Vulkan ICD para RX 580
-VK_ICD = "/usr/lib/x86_64-linux-gnu/GL/default/lib/vulkan/icd.d/radeon_icd.x86_64.json"
+_IS_WINDOWS = sys.platform.startswith("win")
+_IS_LINUX = sys.platform.startswith("linux")
 
 # STT — faster-whisper
 WHISPER_MODEL = "small"  # tiny|base|small|medium — tradeoff latência/qualidade
@@ -47,10 +47,9 @@ KOKORO_VOICE = "pf_dora" # voz padrão; outros: af_heart, am_adam
 # Áudio
 AUDIO_SAMPLE_RATE = 16000
 AUDIO_CHANNELS = 1
-AUDIO_RECORD_SECONDS = 5    # máximo por fala
-AUDIO_SILENCE_THRESHOLD = 0.02  # RMS para detectar fim de fala
-AUDIO_SILENCE_DURATION = 1.0    # segundos de silêncio para encerrar gravação
-PULSE_SERVER = "unix:/run/flatpak/pulse/native"
+AUDIO_RECORD_SECONDS = 5
+AUDIO_SILENCE_THRESHOLD = 0.02
+AUDIO_SILENCE_DURATION = 1.0
 
 # Sistema
 def _build_system_prompt() -> str:

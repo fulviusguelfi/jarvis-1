@@ -8,13 +8,17 @@ import subprocess
 import time
 import threading
 import requests
+import sys
 from typing import Generator
-from config import LLAMA_MODEL, SYSTEM_PROMPT, VK_ICD
+from config import LLAMA_MODEL, SYSTEM_PROMPT
 
-LLAMA_SERVER = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-    "tools/llama.cpp/build/bin/llama-server"
-)
+TOOLS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tools")
+
+if sys.platform.startswith("win"):
+    LLAMA_SERVER = os.path.join(TOOLS_DIR, "llama.cpp", "llama-server.exe")
+else:
+    LLAMA_SERVER = os.path.join(TOOLS_DIR, "llama.cpp/build/bin/llama-server")
+
 _HOST = "127.0.0.1"
 _PORT = 8080
 _BASE = f"http://{_HOST}:{_PORT}"
@@ -40,21 +44,22 @@ def ensure_server() -> None:
         if not os.path.exists(LLAMA_MODEL):
             raise FileNotFoundError(f"Modelo não encontrado: {LLAMA_MODEL}")
 
-        env = {**os.environ, "VK_ICD_FILENAMES": VK_ICD}
+        env = os.environ.copy()
         cmd = [
             LLAMA_SERVER,
             "--model", LLAMA_MODEL,
             "-ngl", "99",
             "--flash-attn", "on",
             "--ctx-size", "4096",
-            "--cache-type-k", "q4_0",
-            "--cache-type-v", "q4_0",
+            "--cache-type-k", "q8_0",
+            "--cache-type-v", "q8_0",
             "--batch-size", "512",
             "--ubatch-size", "128",
             "--host", _HOST,
             "--port", str(_PORT),
             "--parallel", "1",
             "--log-disable",
+            "--jinja",
         ]
         print("[llama-server] Carregando modelo em VRAM (pode demorar ~15s)...")
         _server_proc = subprocess.Popen(

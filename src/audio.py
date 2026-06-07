@@ -1,79 +1,101 @@
-import subprocess
 import tempfile
 import os
 import time
 import threading
 import numpy as np
-from config import PULSE_SERVER, AUDIO_SAMPLE_RATE, AUDIO_CHANNELS, AUDIO_RECORD_SECONDS
+import sounddevice as sd
+import wave
+from config import AUDIO_SAMPLE_RATE, AUDIO_CHANNELS, AUDIO_RECORD_SECONDS
 
-PULSE_SINK = os.environ.get("PULSE_SINK", "default")
-_ffmpeg_env = {**os.environ, "PULSE_SERVER": PULSE_SERVER}
+_AUDIO_INPUT_DEVICE = int(os.environ.get("AUDIO_INPUT_DEVICE", "-1"))
+_AUDIO_OUTPUT_DEVICE = int(os.environ.get("AUDIO_OUTPUT_DEVICE", "-1"))
 
-# Stream contínuo de mic — evita que PipeWire suspenda o source entre gravações
-_mic_stream_proc: subprocess.Popen | None = None
-_mic_stream_lock = threading.Lock()
+_mic_stream: sd.RawInputStream | None = None
+_out_stream: sd.RawOutputStream | None = None
+_stream_lock = threading.Lock()
 
 
-def _get_mic_stream() -> subprocess.Popen:
-    """Mantém um único ffmpeg de captura rodando continuamente."""
-    global _mic_stream_proc
-    with _mic_stream_lock:
-        if _mic_stream_proc is None or _mic_stream_proc.poll() is not None:
-            # Força source ativo antes de abrir stream
-            subprocess.run(
-                ["pactl", "suspend-source", "default", "false"],
-                env=_ffmpeg_env, capture_output=True
+def _get_mic_stream() -> sd.RawInputStream:
+    """Mantém um stream contínuo de mic aberto."""
+    global _mic_stream
+    with _stream_lock:
+        if _mic_stream is None or _mic_stream.closed:
+            _mic_stream = sd.RawInputStream(
+                device=_AUDIO_INPUT_DEVICE if _AUDIO_INPUT_DEVICE >= 0 else None,
+                samplerate=AUDIO_SAMPLE_RATE,
+                channels=AUDIO_CHANNELS,
+                dtype=np.int16,
+                blocksize=8192,
             )
-            _mic_stream_proc = subprocess.Popen(
-                ["ffmpeg", "-loglevel", "quiet",
-                 "-f", "pulse", "-i", "default",
-                 "-ar", str(AUDIO_SAMPLE_RATE), "-ac", "1",
-                 "-f", "s16le", "pipe:1"],
-                env=_ffmpeg_env,
-                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL
+            _mic_stream.start()
+        return _mic_stream
+
+
+def _get_out_stream() -> sd.RawOutputStream:
+    """Mantém stream de saída aberto (keepalive para Bluetooth)."""
+    global _out_stream
+    with _stream_lock:
+        if _out_stream is None or _out_stream.closed:
+            _out_stream = sd.RawOutputStream(
+                device=_AUDIO_OUTPUT_DEVICE if _AUDIO_OUTPUT_DEVICE >= 0 else None,
+                samplerate=22050,
+                channels=AUDIO_CHANNELS,
+                dtype=np.int16,
+                blocksize=4096,
             )
-        return _mic_stream_proc
+            _out_stream.start()
+        return _out_stream
 
 
 def read_mic_chunk(seconds: float = 2.5) -> bytes:
-    """Lê um chunk de PCM s16le do stream contínuo de mic."""
-    proc = _get_mic_stream()
-    chunk_bytes = int(AUDIO_SAMPLE_RATE * seconds) * 2
-    data = proc.stdout.read(chunk_bytes)
-    if len(data) < chunk_bytes:
-        # Stream morreu — reiniciar na próxima chamada
-        global _mic_stream_proc
-        _mic_stream_proc = None
-        return b'\x00' * chunk_bytes
-    return data
+    """Lê chunk contínuo do mic."""
+    stream = _get_mic_stream()
+    chunk_samples = int(AUDIO_SAMPLE_RATE * seconds)
+    try:
+        data, overflowed = stream.read(chunk_samples)
+        if overflowed:
+            print("[audio] aviso: buffer overflow no mic")
+        return data.tobytes()
+    except Exception as e:
+        print(f"[audio] erro ao ler mic: {e}")
+        return b'\x00' * (chunk_samples * 2)
 
 
 def stop_mic_stream():
-    """Para o stream contínuo (chamar ao mudar para record_until_silence)."""
-    global _mic_stream_proc
-    with _mic_stream_lock:
-        if _mic_stream_proc is not None:
-            _mic_stream_proc.terminate()
-            try:
-                _mic_stream_proc.wait(timeout=2)
-            except subprocess.TimeoutExpired:
-                _mic_stream_proc.kill()
-            _mic_stream_proc = None
+    """Para o stream contínuo de mic."""
+    global _mic_stream
+    with _stream_lock:
+        if _mic_stream is not None:
+            _mic_stream.stop()
+            _mic_stream.close()
+            _mic_stream = None
 
 
 def record(duration: float = AUDIO_RECORD_SECONDS, out_path: str | None = None) -> str:
-    """Grava áudio do microfone via ffmpeg+PulseAudio. Retorna path do WAV."""
+    """Grava áudio e salva em WAV."""
     path = out_path or tempfile.mktemp(suffix=".wav")
-    cmd = [
-        "ffmpeg", "-y",
-        "-f", "pulse",
-        "-i", "default",
-        "-t", str(duration),
-        "-ar", str(AUDIO_SAMPLE_RATE),
-        "-ac", str(AUDIO_CHANNELS),
-        path
-    ]
-    subprocess.run(cmd, env=_ffmpeg_env, capture_output=True, check=True)
+    stream = _get_mic_stream()
+    frames = []
+    samples = int(AUDIO_SAMPLE_RATE * duration)
+
+    try:
+        while len(frames) < samples:
+            data, _ = stream.read(min(16384, samples - len(frames)))
+            frames.append(data)
+    except Exception as e:
+        print(f"[audio] erro durante gravação: {e}")
+
+    if frames:
+        audio = np.vstack(frames) if len(frames) > 1 else frames[0]
+    else:
+        audio = np.zeros((0, AUDIO_CHANNELS), dtype=np.int16)
+
+    with wave.open(path, "w") as wf:
+        wf.setnchannels(AUDIO_CHANNELS)
+        wf.setsampwidth(2)
+        wf.setframerate(AUDIO_SAMPLE_RATE)
+        wf.writeframes(audio.tobytes())
+
     return path
 
 
@@ -83,22 +105,14 @@ def record_until_silence(
     silence_secs: float = 1.2,
     out_path: str | None = None
 ) -> str:
-    """Grava até detectar silêncio ou atingir max_duration. Retorna path do WAV."""
+    """Grava até detectar silêncio."""
     path = out_path or tempfile.mktemp(suffix=".wav")
-    raw_path = path + ".raw"
-
-    # Grava raw PCM em tempo real e para quando detecta silêncio
-    # Usa chunks de 0.1s e faz VAD por energia RMS
-    chunk_size = int(AUDIO_SAMPLE_RATE * 0.1)
-    proc = subprocess.Popen(
-        ["ffmpeg", "-y", "-f", "pulse", "-i", "default",
-         "-ar", str(AUDIO_SAMPLE_RATE), "-ac", "1", "-f", "s16le", raw_path],
-        env=_ffmpeg_env, stderr=subprocess.DEVNULL
-    )
-
+    stream = _get_mic_stream()
+    frames = []
     silence_start = None
     start = time.time()
     spoke = False
+    chunk_size = int(AUDIO_SAMPLE_RATE * 0.1)
 
     try:
         while True:
@@ -106,21 +120,10 @@ def record_until_silence(
             if elapsed >= max_duration:
                 break
 
-            time.sleep(0.1)
+            data, _ = stream.read(chunk_size)
+            frames.append(data)
 
-            try:
-                size = os.path.getsize(raw_path)
-            except FileNotFoundError:
-                continue
-
-            if size < chunk_size * 2:
-                continue
-
-            with open(raw_path, "rb") as f:
-                f.seek(max(0, size - chunk_size * 2))
-                data = f.read(chunk_size * 2)
-
-            samples = np.frombuffer(data, dtype=np.int16).astype(np.float32) / 32768.0
+            samples = data.astype(np.float32) / 32768.0
             rms = float(np.sqrt(np.mean(samples ** 2)))
             rms_db = 20 * np.log10(rms + 1e-9)
 
@@ -132,104 +135,66 @@ def record_until_silence(
                     silence_start = time.time()
                 elif time.time() - silence_start >= silence_secs:
                     break
-    finally:
-        proc.terminate()
-        proc.wait()
+    except Exception as e:
+        print(f"[audio] erro durante gravação com VAD: {e}")
 
-    # Converter raw PCM para WAV
-    subprocess.run(
-        ["ffmpeg", "-y", "-f", "s16le", "-ar", str(AUDIO_SAMPLE_RATE), "-ac", "1",
-         "-i", raw_path, path],
-        capture_output=True
-    )
-    os.unlink(raw_path)
+    if frames:
+        audio = np.vstack(frames) if len(frames) > 1 else frames[0]
+    else:
+        audio = np.zeros((0, AUDIO_CHANNELS), dtype=np.int16)
+
+    with wave.open(path, "w") as wf:
+        wf.setnchannels(AUDIO_CHANNELS)
+        wf.setsampwidth(2)
+        wf.setframerate(AUDIO_SAMPLE_RATE)
+        wf.writeframes(audio.tobytes())
+
     return path
 
 
 def play(wav_path: str) -> None:
-    """Toca um arquivo WAV via paplay (sincronizado com hardware)."""
-    subprocess.run(["paplay", wav_path], env=_ffmpeg_env, capture_output=True)
-
-
-def _samples_to_wav_bytes(samples: np.ndarray, sample_rate: int) -> bytes:
-    """Converte float32 samples para bytes WAV completo."""
-    import io, wave as _wave
-    buf = io.BytesIO()
-    pcm = (samples * 32767).astype(np.int16)
-    with _wave.open(buf, "w") as wf:
-        wf.setnchannels(1)
-        wf.setsampwidth(2)
-        wf.setframerate(sample_rate)
-        wf.writeframes(pcm.tobytes())
-    return buf.getvalue()
-
-
-_BT_WAKEUP_SECS = 0.15  # silêncio pré-roll reduzido (headset kept-alive)
-
-# Thread que mantém o headset BT acordado com silêncio contínuo
-_keepalive_proc: subprocess.Popen | None = None
-_keepalive_lock = threading.Lock()
+    """Toca um arquivo WAV."""
+    with wave.open(wav_path, "rb") as wf:
+        data = np.frombuffer(wf.readframes(wf.getnframes()), dtype=np.int16)
+    sd.play(data, AUDIO_SAMPLE_RATE, device=_AUDIO_OUTPUT_DEVICE if _AUDIO_OUTPUT_DEVICE >= 0 else None)
+    sd.wait()
 
 
 def start_bt_keepalive(sample_rate: int = 22050) -> None:
-    """Inicia stream silencioso para manter headset BT acordado."""
-    global _keepalive_proc
-    with _keepalive_lock:
-        if _keepalive_proc is not None and _keepalive_proc.poll() is None:
-            return
-        _keepalive_proc = subprocess.Popen(
-            ["paplay", "--raw", f"--rate={sample_rate}", "--channels=1",
-             "--format=s16le", "--latency-msec=500"],
-            env=_ffmpeg_env, stdin=subprocess.PIPE, stderr=subprocess.DEVNULL
-        )
-        # Envia blocos de silêncio em thread separada
-        def _feed():
-            silence_block = b'\x00' * int(sample_rate * 0.5) * 2  # 500ms por vez
-            while True:
-                try:
-                    if _keepalive_proc.poll() is not None:
-                        break
-                    _keepalive_proc.stdin.write(silence_block)
-                    _keepalive_proc.stdin.flush()
-                    time.sleep(0.4)
-                except Exception:
+    """Mantém stream de saída aberto como keepalive para Bluetooth."""
+    stream = _get_out_stream()
+
+    def _feed():
+        silence_block = np.zeros(int(sample_rate * 0.5), dtype=np.int16)
+        while True:
+            try:
+                if stream.closed:
                     break
-        threading.Thread(target=_feed, daemon=True).start()
+                stream.write(silence_block)
+                time.sleep(0.4)
+            except Exception:
+                break
+
+    threading.Thread(target=_feed, daemon=True).start()
 
 
 def stop_bt_keepalive() -> None:
-    global _keepalive_proc
-    with _keepalive_lock:
-        if _keepalive_proc is not None:
+    """Para stream de keepalive."""
+    global _out_stream
+    with _stream_lock:
+        if _out_stream is not None:
             try:
-                _keepalive_proc.terminate()
-                _keepalive_proc.wait(timeout=1)
+                _out_stream.stop()
+                _out_stream.close()
             except Exception:
                 pass
-            _keepalive_proc = None
-
-
-def _bt_wakeup(sample_rate: int, proc_stdin) -> None:
-    """Envia silêncio mínimo antes do áudio."""
-    silence = b'\x00' * int(sample_rate * _BT_WAKEUP_SECS) * 2
-    try:
-        proc_stdin.write(silence)
-        proc_stdin.flush()
-    except Exception:
-        pass
+            _out_stream = None
 
 
 def play_samples(samples: np.ndarray, sample_rate: int) -> None:
-    """Toca array numpy via paplay com pré-roll de silêncio para Bluetooth."""
-    proc = subprocess.Popen(
-        ["paplay", "--raw", f"--rate={sample_rate}", "--channels=1", "--format=s16le"],
-        env=_ffmpeg_env, stdin=subprocess.PIPE, stderr=subprocess.DEVNULL
-    )
-    _bt_wakeup(sample_rate, proc.stdin)
-    pcm = (samples * 32767).astype(np.int16).tobytes()
-    proc.stdin.write(pcm)
-    proc.stdin.close()
-    proc.wait()
+    """Toca array numpy."""
+    sd.play(samples, sample_rate, device=_AUDIO_OUTPUT_DEVICE if _AUDIO_OUTPUT_DEVICE >= 0 else None)
+    sd.wait()
 
 
 def play_samples_interruptible(
@@ -238,49 +203,21 @@ def play_samples_interruptible(
     stop_event: threading.Event,
     chunk_secs: float = 0.05
 ) -> bool:
-    """
-    Toca amostras em chunks com pré-roll BT. Para se stop_event for setado.
-    Retorna True se foi interrompido antes do fim.
-    """
-    pcm = (samples * 32767).astype(np.int16).tobytes()
-    cmd = ["paplay", "--raw", f"--rate={sample_rate}", "--channels=1", "--format=s16le"]
-    proc = subprocess.Popen(cmd, env=_ffmpeg_env, stdin=subprocess.PIPE, stderr=subprocess.DEVNULL)
-    _bt_wakeup(sample_rate, proc.stdin)
-
-    chunk_bytes = int(sample_rate * chunk_secs) * 2  # 16-bit = 2 bytes/sample
-    offset = 0
+    """Toca em chunks, pode ser interrompido por stop_event."""
+    chunk_samples = int(sample_rate * chunk_secs)
+    stream = _get_out_stream()
     interrupted = False
 
     try:
-        while offset < len(pcm):
+        for i in range(0, len(samples), chunk_samples):
             if stop_event.is_set():
                 interrupted = True
                 break
-            chunk = pcm[offset:offset + chunk_bytes]
-            try:
-                proc.stdin.write(chunk)
-                proc.stdin.flush()
-            except BrokenPipeError:
-                break
-            offset += chunk_bytes
-    finally:
-        try:
-            proc.stdin.close()
-        except Exception:
-            pass
-        if interrupted:
-            # Interrompido pelo usuário — mata imediatamente
-            proc.terminate()
-            try:
-                proc.wait(timeout=1)
-            except subprocess.TimeoutExpired:
-                proc.kill()
-        else:
-            # Deixa o paplay terminar de tocar antes de retornar
-            try:
-                proc.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                proc.kill()
+            chunk = samples[i:i + chunk_samples]
+            pcm = (chunk * 32767).astype(np.int16)
+            stream.write(pcm)
+    except Exception as e:
+        print(f"[audio] erro ao tocar: {e}")
 
     return interrupted
 
@@ -291,30 +228,15 @@ def mic_vad_background(
     rms_threshold: float = 0.025,
     consecutive_needed: int = 3
 ) -> None:
-    """
-    Thread de fundo: monitora microfone e seta trigger_event ao detectar voz.
-    Encerra quando stop_event for setado ou voz for detectada.
-    """
-    cmd = [
-        "ffmpeg", "-loglevel", "quiet",
-        "-f", "pulse", "-i", "default",
-        "-ar", str(AUDIO_SAMPLE_RATE), "-ac", "1",
-        "-f", "s16le", "pipe:1"
-    ]
-    proc = subprocess.Popen(
-        cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, env=_ffmpeg_env
-    )
-
-    chunk_samples = int(AUDIO_SAMPLE_RATE * 0.08)  # 80ms chunks
-    chunk_bytes = chunk_samples * 2
+    """Thread de fundo: detecta voz do mic."""
+    stream = _get_mic_stream()
+    chunk_samples = int(AUDIO_SAMPLE_RATE * 0.08)
     consecutive = 0
 
     try:
         while not stop_event.is_set():
-            data = proc.stdout.read(chunk_bytes)
-            if len(data) < chunk_bytes:
-                break
-            arr = np.frombuffer(data, dtype=np.int16).astype(np.float32) / 32768.0
+            data, _ = stream.read(chunk_samples)
+            arr = data.astype(np.float32) / 32768.0
             rms = float(np.sqrt(np.mean(arr ** 2)))
 
             if rms > rms_threshold:
@@ -324,9 +246,5 @@ def mic_vad_background(
                     break
             else:
                 consecutive = max(0, consecutive - 1)
-    finally:
-        proc.terminate()
-        try:
-            proc.wait(timeout=1)
-        except subprocess.TimeoutExpired:
-            proc.kill()
+    except Exception as e:
+        print(f"[audio] erro no VAD: {e}")
