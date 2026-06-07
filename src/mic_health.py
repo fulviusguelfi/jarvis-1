@@ -46,7 +46,7 @@ def monitor_mic_health(
                     # Stream aberto, tenta ler
                     try:
                         chunk_samples = 160  # 10ms @ 16kHz
-                        data, overflowed = stream.read(chunk_samples, exception_on_overflow=False)
+                        data, overflowed = stream.read(chunk_samples)
                         last_successful_read = time.time()
                         notification_sent = False
                     except Exception as e:
