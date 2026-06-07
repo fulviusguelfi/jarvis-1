@@ -4,8 +4,10 @@ models/
 # Binários e builds das ferramentas (11GB — reconstruir via brainstorm/05 e CONTINUATION.md)
 tools/
 
-# Config local do Claude Code
-.claude/
+# Config local do Claude Code (versiona apenas os agentes do projeto)
+.claude/*
+!.claude/agents/
+!.claude/agents/**
 
 # Variáveis de ambiente e segredos
 .env
