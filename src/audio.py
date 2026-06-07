@@ -14,19 +14,30 @@ _mic_stream: sd.InputStream | None = None
 _out_stream: sd.OutputStream | None = None
 _stream_lock = threading.Lock()
 
+def _find_jabra_device() -> int | None:
+    """Procura por Jabra Link 380 ou dispositivo padrão com entrada."""
+    devices = sd.query_devices()
+    for i, dev in enumerate(devices):
+        if 'jabra' in dev['name'].lower() and dev['max_input_channels'] > 0:
+            return i
+    return sd.default.device[0]
 
 def _get_mic_stream() -> sd.InputStream:
-    """Mantém um stream contínuo de mic aberto (dispositivo padrão do SO)."""
+    """Mantém um stream contínuo de mic aberto (Jabra ou padrão)."""
     global _mic_stream
     with _stream_lock:
         if _mic_stream is None or _mic_stream.closed:
+            device_idx = _find_jabra_device()
             _mic_stream = sd.InputStream(
+                device=device_idx,
                 samplerate=AUDIO_SAMPLE_RATE,
                 channels=AUDIO_CHANNELS,
                 dtype=np.int16,
                 blocksize=8192,
             )
             _mic_stream.start()
+            # Limpar buffer inicial
+            _mic_stream.read(AUDIO_SAMPLE_RATE)
         return _mic_stream
 
 
@@ -53,9 +64,10 @@ def read_mic_chunk(seconds: float = 2.5) -> bytes:
         data, overflowed = stream.read(chunk_samples)
         if overflowed:
             print("[audio] aviso: buffer overflow no mic")
+        print("[audio-debug] Lido {} samples em {:.1f}s".format(len(data), seconds))
         return data.tobytes()
     except Exception as e:
-        print(f"[audio] erro ao ler mic: {e}")
+        print("[audio-debug] ERRO ao ler mic: {}".format(e))
         return b'\x00' * (chunk_samples * 2)
 
 
@@ -163,13 +175,13 @@ def start_bt_keepalive(sample_rate: int = 22050) -> None:
     stream = _get_out_stream()
 
     def _feed():
-        silence_block = np.zeros(int(sample_rate * 0.5), dtype=np.int16)
+        silence_block = np.zeros(int(sample_rate * 0.05), dtype=np.int16)
         while True:
             try:
                 if stream.closed:
                     break
                 stream.write(silence_block)
-                time.sleep(0.4)
+                time.sleep(0.05)
             except Exception:
                 break
 

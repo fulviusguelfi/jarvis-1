@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Jarvis — assistente de voz local. Stack: Whisper + Qwen3-8B Vulkan + Piper TTS + wake word."""
+"""Jarvis - assistente de voz local. Stack: Whisper + Qwen3-8B Vulkan + Piper TTS + wake word."""
 import sys
 import os
 import threading
@@ -87,12 +87,12 @@ def _check_mic() -> bool:
     peak = np.max(np.abs(np.frombuffer(pcm, dtype=np.int16).astype(np.float32))) / 32768
     peak_db = 20 * np.log10(peak + 1e-9)
     if peak_db < -60:
-        print("⚠️  AVISO: microfone silencioso. Verifique o headset Jabra:")
-        print("   • Mova o dongle para porta USB traseira da placa-mãe")
-        print("   • Pressione o botão do headset para acordá-lo")
-        print("   • O Jarvis vai continuar tentando — diga 'Jarvis' quando resolver\n")
+        print("[AVISO] Microfone silencioso. Verifique o headset Jabra:")
+        print("  - Mova o dongle para porta USB traseira da placa-mae")
+        print("  - Pressione o botao do headset para acorda-lo")
+        print("  - O Jarvis vai continuar tentando - diga 'Jarvis' quando resolver\n")
         return False
-    print(f"✓ Microfone OK ({peak_db:.0f}dB)")
+    print("[OK] Microfone OK ({:.0f}dB)".format(peak_db))
     return True
 
 
@@ -103,9 +103,9 @@ def listen_for_wakeword() -> bool:
     Retorna True se wake word detectada.
     """
     import tempfile, wave as _wave, io
+    print("[debug] Lendo chunk...")
     pcm = read_mic_chunk(WAKE_CHUNK_SECS)
 
-    # Escreve WAV em memória para o Whisper
     buf = io.BytesIO()
     with _wave.open(buf, "w") as wf:
         wf.setnchannels(1)
@@ -118,13 +118,15 @@ def listen_for_wakeword() -> bool:
     with open(tmp, "wb") as f:
         f.write(buf.getvalue())
 
+    print("[debug] Transcrevendo com Whisper...")
     model = _get_whisper()
     segs, _ = model.transcribe(tmp, language="pt", vad_filter=False)
     text = " ".join(s.text.strip().lower() for s in segs)
+    print("[debug] Whisper: '{}'".format(text))
     os.unlink(tmp)
 
     if any(w in text for w in WAKE_WORDS):
-        print(f"\n[wake] '{text.strip()}' → ativado!")
+        print("\n[wake] '{}' -> ativado!".format(text.strip()))
         return True
     return False
 
@@ -134,7 +136,7 @@ def speak_streaming(text_generator, interrupted_event: threading.Event) -> tuple
     stop_vad = threading.Event()
     user_spoke = threading.Event()
 
-    # VAD com threshold alto para ignorar ruído BT — exige 640ms de voz contínua
+    # VAD com threshold alto para ignorar ruído BT - exige 640ms de voz contínua
     vad_thread = threading.Thread(
         target=mic_vad_background,
         args=(stop_vad, user_spoke),
@@ -231,17 +233,17 @@ def main():
 
     _idle_chunks = 0
     while True:
-        print("💤 ouvindo... ", end="", flush=True)
+        print(" ouvindo... ", end="", flush=True)
 
         if not listen_for_wakeword():
             _idle_chunks += 1
             continue
         _idle_chunks = 0
 
-        # Wake word detectada — para stream contínuo, confirma e grava comando
+        # Wake word detectada - para stream contínuo, confirma e grava comando
         stop_mic_stream()
         _ack()
-        print("🎤 Pode falar...")
+        print("[MIC] Pode falar...")
         wav_path = record_until_silence(max_duration=10.0)
         text = transcribe(wav_path)
         os.unlink(wav_path)
@@ -262,7 +264,7 @@ def main():
         # Frase de dispensa? Responde e volta ao modo de espera
         if _is_dismiss(clean):
             _say_dismiss()
-            print("[dispensado — aguardando 'Jarvis']")
+            print("[dispensado - aguardando 'Jarvis']")
             _idle_chunks = 0
             continue
 
@@ -276,20 +278,20 @@ def main():
         # Janela de conversa: ouve próximas perguntas sem precisar dizer "Jarvis"
         # Sai da janela se dispensado ou sem fala por 10s
         while True:
-            print("🎤 Pode continuar...")
+            print("[MIC] Pode continuar...")
             wav_follow = record_until_silence(max_duration=10.0)
             text_follow = transcribe(wav_follow)
             os.unlink(wav_follow)
 
             if not text_follow or len(text_follow.strip()) < 3:
-                print("[sem fala — voltando ao modo de espera]")
+                print("[sem fala - voltando ao modo de espera]")
                 break
 
             clean_follow = text_follow.strip()
 
             if _is_dismiss(clean_follow):
                 _say_dismiss()
-                print("[dispensado — aguardando 'Jarvis']")
+                print("[dispensado - aguardando 'Jarvis']")
                 break
 
             print(f"Você: {clean_follow}")

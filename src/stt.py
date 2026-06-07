@@ -24,5 +24,5 @@ def transcribe(wav_path: str) -> str:
     )
     text = " ".join(s.text.strip() for s in segments).strip()
     if info.duration > 0:
-        print(f"[STT] {info.duration:.1f}s → '{text}'")
+        print("[STT] {:.1f}s -> '{}'".format(info.duration, text))
     return text
