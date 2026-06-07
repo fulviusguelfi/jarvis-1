@@ -60,10 +60,10 @@ required = {
 for module, install_cmd in required.items():
     try:
         __import__(module)
-        print(f"      ✓ {module}")
+        print(f"      [OK] {module}")
     except ImportError:
-        print(f"      ✗ {module} nao instalado")
-        print(f"        Execute: {install_cmd}")
+        print(f"      [MISSING] {module} nao instalado")
+        print(f"               Execute: {install_cmd}")
         deps_ok = False
 
 if not deps_ok:
