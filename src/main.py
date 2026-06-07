@@ -260,7 +260,7 @@ def main():
         on_mic_dead_callback=play_mic_dead_notification
     )
 
-    print("Pronto. Aguardando wake word 'Jarvis'...\n")
+    print("Pronto. Aguardando wake word 'Hey Jarvis'...\n")
 
     # FSM
     fsm = JarvisFSM()
