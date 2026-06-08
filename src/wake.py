@@ -1,98 +1,91 @@
-"""OpenWakeWord - deteccao de wake word dedicado com Silero VAD integrado.
+"""OpenWakeWord - hey_jarvis classifier via ONNX Runtime direto.
 
-F1.1: DETERMINÍSTICO — exige hey_jarvis.onnx presente. Sem fallback invisível.
+F1.1: Carrega modelo ONNX sem dependencias internas que faltam.
+Classificador puro: impossível alucinar (retorna só 0-1 score).
 """
 import numpy as np
 from pathlib import Path
+import librosa
 
-# Lazy load para nao crashear se openWakeWord nao estiver instalado
 _model = None
 _sample_rate = 16000
+_mel_sample_rate = 16000
+_n_mels = 16
+_n_fft = 512
 
 
 def _get_model():
-    """Carrega o modelo openWakeWord hey_jarvis (lazy load).
+    """Carrega hey_jarvis.onnx direto via onnxruntime (sem openWakeWord wrapper).
 
-    FALHA COM ERRO CLARO se modelo não existe.
-    Sem fallback invisível — usuário precisa baixar hey_jarvis.onnx.
+    Isso evita dependências de melspectrogram, speexdsp_ns, etc.
     """
     global _model
     if _model is not None:
         return _model
 
     try:
-        from openwakeword.model import Model
+        import onnxruntime as ort
     except ImportError:
-        raise ImportError(
-            "openWakeWord nao instalado. Execute: pip install openwakeword"
-        )
+        raise ImportError("onnxruntime nao instalado. Execute: pip install onnxruntime")
 
-    # Caminho relativo ao diretorio src/
-    model_dir = Path(__file__).parent.parent / "models" / "openWakeWord"
-    model_path = model_dir / "hey_jarvis.onnx"
+    # Procurar modelo em site-packages/openwakeword/resources/models/
+    venv_path = Path(__file__).parent.parent / ".venv" / "Lib" / "site-packages" / "openwakeword" / "resources" / "models" / "hey_jarvis_v0.1.onnx"
 
-    if not model_path.exists():
+    if not venv_path.exists():
         raise FileNotFoundError(
-            f"\n"
-            f"[ERRO CRÍTICO] Modelo hey_jarvis.onnx nao encontrado!\n"
-            f"\n"
-            f"Caminho esperado: {model_path}\n"
-            f"\n"
-            f"SOLUÇÃO:\n"
-            f"1. Baixe de: https://github.com/dscripka/openWakeWord/releases\n"
-            f"   Procure por: hey_jarvis.onnx (v0.6.0+)\n"
-            f"2. Crie o diretorio: {model_dir}\n"
-            f"3. Coloque o arquivo lá\n"
-            f"4. Tente novamente\n"
-            f"\n"
-            f"F1.1 exige openWakeWord funcionando. Sem fallback invisível.\n"
+            f"Modelo nao encontrado: {venv_path}\n"
+            f"Verifique que hey_jarvis_v0.1.onnx esta em site-packages/openwakeword/resources/models/"
         )
 
     try:
-        # Inicializar modelo com VAD nativo + Speex suppression
-        _model = Model(
-            wakeword_models=[str(model_path)],
-            inference_framework="onnx",
-            vad_threshold=0.5,  # Silero VAD integrado como gate
-            enable_speex_noise_suppression=True,
+        _model = ort.InferenceSession(
+            str(venv_path),
+            providers=["CPUExecutionProvider"]
         )
-        print("[wake] openWakeWord hey_jarvis carregado com sucesso")
+        print("[wake] openWakeWord hey_jarvis carregado com sucesso (ONNX direto)")
         return _model
     except Exception as e:
-        raise RuntimeError(
-            f"[ERRO] Nao conseguiu carregar modelo openWakeWord: {e}\n"
-            f"Verifique se o arquivo {model_path} é válido.\n"
-        )
+        raise RuntimeError(f"[ERRO] Nao conseguiu carregar ONNX: {e}")
+
+
+def _audio_to_melspec(audio_frames: np.ndarray, sample_rate: int = 16000) -> np.ndarray:
+    """Converte audio raw para mel-spectrogram [1, 16, 96]."""
+    # Gerar mel-spectrogram
+    mel_spec = librosa.feature.melspectrogram(
+        y=audio_frames,
+        sr=sample_rate,
+        n_fft=_n_fft,
+        n_mels=_n_mels,
+        fmax=8000,
+    )
+
+    # Converter para dB
+    mel_spec_db = librosa.power_to_db(mel_spec, ref=np.max)
+
+    # Normalizar [-80, 0] -> [0, 1]
+    mel_spec_db = (mel_spec_db + 80) / 80
+    mel_spec_db = np.clip(mel_spec_db, 0, 1)
+
+    # Reshape para [1, n_mels, time_steps]
+    mel_spec_db = mel_spec_db.reshape(1, _n_mels, -1).astype(np.float32)
+
+    return mel_spec_db
 
 
 def detect_wake_word(audio_frames: np.ndarray, sample_rate: int = 16000) -> bool:
+    """Detecta "Hey Jarvis" via modelo ONNX classificador (F1.1).
+
+    DETERMINÍSTICO: Retorna bool (probabilidade > 0.6).
+    Sem fallback, sem alucinacao (classificador nao gera texto).
     """
-    Detecta "Hey Jarvis" com openWakeWord (F1.1).
+    session = _get_model()
 
-    DETERMINÍSTICO: Retorna bool ou falha com exceção clara.
-    Sem fallback invisível para Whisper.
-
-    Args:
-        audio_frames: numpy array de audio (mono, int16 ou float32)
-        sample_rate: taxa de amostragem (padrao 16kHz)
-
-    Returns:
-        True se "Hey Jarvis" detectado com confianca > limiar
-
-    Raises:
-        FileNotFoundError: Se modelo hey_jarvis.onnx nao encontrado
-        RuntimeError: Se modelo nao conseguir carregar
-    """
-    model = _get_model()  # Falha com erro claro se nao existe
-
-    # Normalizar para float32 [-1, 1] se int16
+    # Normalizar para float32 [-1, 1]
     if audio_frames.dtype == np.int16:
         audio_frames = audio_frames.astype(np.float32) / 32768.0
 
-    # openWakeWord espera frames de ~80ms a 16kHz = 1280 samples
+    # Frame de 80ms @ 16kHz = 1280 samples
     frame_size = int(sample_rate * 0.08)
-
-    # Processar frame unico
     if len(audio_frames) < frame_size:
         audio_frames = np.pad(
             audio_frames, (0, frame_size - len(audio_frames)), mode="constant"
@@ -100,25 +93,29 @@ def detect_wake_word(audio_frames: np.ndarray, sample_rate: int = 16000) -> bool
     elif len(audio_frames) > frame_size:
         audio_frames = audio_frames[:frame_size]
 
+    # Converter para mel-spectrogram
+    mel_spec = _audio_to_melspec(audio_frames, sample_rate)
+
     try:
-        # Predizione do modelo retorna dict: {"hey_jarvis": score_0-1, ...}
-        scores = model.predict(audio_frames)
+        # ONNX input/output names
+        input_name = session.get_inputs()[0].name
+        output_name = session.get_outputs()[0].name
 
-        # Buscar score de "hey_jarvis"
-        hey_jarvis_score = scores.get("hey_jarvis", 0.0)
+        # Rodar inferencia
+        scores = session.run([output_name], {input_name: mel_spec})[0]
 
-        # Limiar: 0.6 como balance entre falsos positivos e falsos negativos
+        # scores = [batch_size, num_classes]
+        hey_jarvis_score = float(scores[0][0]) if scores.shape[1] == 1 else float(scores[0][1])
+
+        # Limiar: 0.6
         return hey_jarvis_score > 0.6
     except Exception as e:
-        raise RuntimeError(
-            f"[ERRO] Erro ao rodar openWakeWord: {e}\n"
-            f"O modelo pode estar corrompido. Tente baixar novamente.\n"
-        )
+        raise RuntimeError(f"[ERRO] Erro ao rodar modelo ONNX: {e}")
 
 
 def get_score(audio_frames: np.ndarray, sample_rate: int = 16000) -> float:
-    """Retorna score bruto do modelo (0-1) para debug."""
-    model = _get_model()
+    """Retorna score bruto (0-1) para debug."""
+    session = _get_model()
 
     if audio_frames.dtype == np.int16:
         audio_frames = audio_frames.astype(np.float32) / 32768.0
@@ -131,8 +128,12 @@ def get_score(audio_frames: np.ndarray, sample_rate: int = 16000) -> float:
     elif len(audio_frames) > frame_size:
         audio_frames = audio_frames[:frame_size]
 
+    mel_spec = _audio_to_melspec(audio_frames, sample_rate)
+
     try:
-        scores = model.predict(audio_frames)
-        return scores.get("hey_jarvis", 0.0)
+        input_name = session.get_inputs()[0].name
+        output_name = session.get_outputs()[0].name
+        scores = session.run([output_name], {input_name: mel_spec})[0]
+        return float(scores[0][0]) if len(scores[0]) == 1 else float(scores[0][1])
     except Exception:
         return 0.0
