@@ -32,7 +32,22 @@ MARITACA_TEMPERATURE = 0.7
 
 # LLM local (offline) — llama.cpp + Vulkan
 LLAMA_CLI = os.path.join(TOOLS_DIR, "llama.cpp/build/bin/llama-cli")
-LLAMA_MODEL = os.path.join(MODELS_DIR, "qwen3-8b/Qwen3-8B-Q4_K_M.gguf")
+
+# Ler modelo de .env (QWEN_MODEL)
+_qwen_model_name = os.environ.get("QWEN_MODEL", "Qwen3-8B-Q4_K_M.gguf")
+# Adicionar .gguf se não tiver
+if not _qwen_model_name.endswith(".gguf"):
+    _qwen_model_name += ".gguf"
+
+# Detectar subdiretório baseado no nome do modelo
+if "35B" in _qwen_model_name:
+    _qwen_subdir = "qwen3-35b"
+elif "4B" in _qwen_model_name:
+    _qwen_subdir = "qwen3-4b"
+else:
+    _qwen_subdir = "qwen3-8b"
+
+LLAMA_MODEL = os.path.join(MODELS_DIR, _qwen_subdir, _qwen_model_name)
 
 # Modo LLM: "cloud" (Maritaca API) | "local" (llama-server + Vulkan)
 LLM_MODE = os.environ.get("LLM_MODE", "cloud")
