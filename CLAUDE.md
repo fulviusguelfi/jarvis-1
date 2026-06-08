@@ -13,16 +13,18 @@ Desenvolvimento solo. Hardware fixo: Ryzen 5 4500 · 16GB RAM · **RX 580 8GB** 
 - `CONTINUATION.md` — mapa de migração Linux→Windows
 - `docs/memory/` — contexto, hardware, pesquisa
 
-## Estado Atual — v0.1.0 (Fase 0 concluída)
-Pipeline end-to-end funcional e validado em conversa real:
-- **STT:** faster-whisper `small` (CPU, pt-BR) — `src/stt.py`
-- **LLM:** Qwen3-8B Q4_K_M via llama.cpp + Vulkan (RX 580) — `src/llm_local.py`
+## Estado Atual — v0.2.0 (Fase 1 concluída)
+Pipeline end-to-end funcional com **wake word determinístico** e **35B MoE no RX 580**:
+- **Wake word:** openWakeWord hey_jarvis (ONNX classificador, 0-1 score) — `src/wake.py`
+- **STT:** faster-whisper `small` (CPU, pt-BR, apenas sobre fala válida) — `src/stt.py`
+- **VAD:** Silero VAD para endpointing (fim de fala detectado em <300ms) — `src/vad.py`
+- **LLM:** Qwen3.6-35B-A3B via TurboQuant (turbo4/turbo3 KV cache) + Vulkan (RX 580) — `src/llm_local.py`
+- **Amostragem:** top_k=20, top_p=0.8, presence_penalty=1.5 (model card) — sem repetição
 - **TTS:** Piper `pt_BR-faber-medium` — `src/tts_piper.py`
 - **Áudio:** sounddevice, device padrão do SO + auto-detecção Jabra — `src/audio.py`
-- **Orquestração:** wake word "Jarvis" (Whisper em loop) → comando → resposta — `src/main.py`
+- **Orquestração:** openWakeWord → Silero VAD → STT → 35B LLM → TTS — `src/main.py` (FSM 7 estados)
 
-**Limitação conhecida (alvo da Fase 1):** Whisper alucina em silêncio no loop de wake word
-(`vad_filter=False` em `listen_for_wakeword`). Solução: openWakeWord (classificador, não gera texto).
+**Fase 1 concluída:** determinismo (sem fallback invisível), fluência (~5-10 tok/s), voz pt-BR coerente.
 
 ## Arquitetura (camadas, fluxo top-down)
 ```
@@ -69,23 +71,53 @@ tools/         — TOOL_DEFINITIONS + TOOL_HANDLERS (run_shell etc.)
 
 ## Stack
 - Python **3.12** (não usar o 3.14 do sistema), venv em `.venv`
-- faster-whisper, openWakeWord (Fase 1), silero-vad, piper-tts, sounddevice, numpy
-- llama.cpp `llama-server.exe` (build win-vulkan-x64) em `tools/llama.cpp/`
+- faster-whisper, openWakeWord (hey_jarvis_v0.1.onnx ONNX direto), silero-vad, piper-tts, sounddevice, numpy, librosa
+- **llama-cpp-turboquant** `llama-server.exe` (fork TheTom, branch feature/turboquant-kv-cache, build MSVC+Vulkan)
+  em `A:\llama-cpp-turboquant\build\bin\Release\`
+  - Suporte: turbo4 (K, ~4.5b), turbo3 (V, ~3.5b) — **só neste fork**, não em ggml-org main
+  - Vulkan (AMD RX 580): `--cache-type-k turbo4 --cache-type-v turbo3 --n-cpu-moe 32+ --flash-attn on`
 - pytest (testes), ruff (lint)
 
-## Orçamentos de Latência (alvos da Fase 1 — "Fluidez")
+## Orçamentos de Latência (Fase 1 — "Fluidez", verificado com 35B A3B)
 ```
-Detecção de wake word (por frame 80ms):     < 50ms   (openWakeWord CPU)
-Endpoint de fim de fala (Silero VAD):        < 300ms  após silêncio
-STT de comando (~3s de áudio, Whisper small): < 1s
-LLM 1º token (Qwen3-8B Vulkan):              < 1s
-TTS 1ª sentença (Piper RTF ~0.06):           < 300ms
-Tempo percebido (fim da fala → 1º áudio):    < 2s     (alvo)
+Detecção de wake word (por frame 80ms):           < 50ms   (openWakeWord ONNX CPU)
+Endpoint de fim de fala (Silero VAD):              < 300ms  após silêncio
+STT de comando (~3s áudio, Whisper small):         < 1.5s   (CPU)
+LLM 1º token (Qwen3.6-35B-A3B TurboQuant Vulkan):  < 2s     (startup ~100s first-ever)
+LLM tokens quente (flow):                           5-10 tok/s (turbo KV + n-cpu-moe 32)
+TTS 1ª sentença (Piper RTF ~0.06):                 < 300ms
+Tempo percebido (fim da fala → 1º áudio resposta): 7-15s    (realista com 35B)
 ```
+**Nota:** Startup (~100s) paga no 1º uso da sessão (paginação expert do NVMe em mmap).
+Recomendado manter servidor warm entre perguntas ou usar modelo menor (8B ~1s/token).
+
+## Patch Crítico: RX 580 + TurboQuant Flash Attention
+
+**Arquivo:** `A:\llama-cpp-turboquant\ggml\src\ggml-vulkan\ggml-vulkan.cpp` (linha ~2261)
+
+**Problema:** RX 580 é Wave64-puro (`subgroup_min/max=64`). Alguns shaders de flash attention
+pediam subgroup_size ≠64 → `GGML_ASSERT` e crash no warmup, mesmo após modelo carregado.
+
+**Fix (aplicado):** Ao invés de abortar, clampear `required_subgroup_size` no range [min,max]:
+```c
+if (device->subgroup_size_control && required_subgroup_size > 0) {
+    // Clampear ao range suportado pelo device
+    if (required_subgroup_size < device->subgroup_min_size) 
+        required_subgroup_size = device->subgroup_min_size;
+    if (required_subgroup_size > device->subgroup_max_size) 
+        required_subgroup_size = device->subgroup_max_size;
+    pipeline_shader_stage_required_subgroup_size_create_info.requiredSubgroupSize = required_subgroup_size;
+    pipeline_shader_create_info.setPNext(&pipeline_shader_stage_required_subgroup_size_create_info);
+}
+```
+
+**Validação:** Resposta coerente em pt-BR prova que a matemática da FA está correta (não foi gambiarra).
 
 ## Comandos
 ```powershell
 .venv\Scripts\Activate.ps1
-python check_deps.py        # smoke test do ambiente (22/22)
+python check_deps.py        # smoke test do ambiente (24/25; Jabra é hardware)
+python setup_models.py      # valida wake word, deps, llama-server, modelo
 python src\main.py          # rodar o assistente
+jarvis.bat                  # (Desktop) setup + run + logging
 ```
