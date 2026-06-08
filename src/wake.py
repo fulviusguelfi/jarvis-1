@@ -49,15 +49,33 @@ def _get_model():
 
 
 def _audio_to_melspec(audio_frames: np.ndarray, sample_rate: int = 16000) -> np.ndarray:
-    """Converte audio raw para mel-spectrogram [1, 16, 96]."""
+    """Converte audio raw para mel-spectrogram [1, 16, 96].
+
+    Esperado: 1280 samples (80ms) -> [1, 16, 96]
+    hop_length=128 → 1280/128 = 10 frames, precisa padding para 96
+    """
+    # Fazer padding para 96 timesteps
+    # Com n_fft=512, hop_length=128: preciso de ~12288 samples para 96 frames
+    # Fazer padding do áudio para garantir 96 frames
+    target_samples = (96 - 1) * 128 + _n_fft  # ~12544
+    if len(audio_frames) < target_samples:
+        audio_frames = np.pad(audio_frames, (0, target_samples - len(audio_frames)), mode='constant')
+
     # Gerar mel-spectrogram
     mel_spec = librosa.feature.melspectrogram(
         y=audio_frames,
         sr=sample_rate,
         n_fft=_n_fft,
+        hop_length=128,
         n_mels=_n_mels,
         fmax=8000,
     )
+
+    # Garantir exatamente [n_mels, 96]
+    if mel_spec.shape[1] < 96:
+        mel_spec = np.pad(mel_spec, ((0, 0), (0, 96 - mel_spec.shape[1])), mode='constant')
+    elif mel_spec.shape[1] > 96:
+        mel_spec = mel_spec[:, :96]
 
     # Converter para dB
     mel_spec_db = librosa.power_to_db(mel_spec, ref=np.max)
@@ -66,8 +84,8 @@ def _audio_to_melspec(audio_frames: np.ndarray, sample_rate: int = 16000) -> np.
     mel_spec_db = (mel_spec_db + 80) / 80
     mel_spec_db = np.clip(mel_spec_db, 0, 1)
 
-    # Reshape para [1, n_mels, time_steps]
-    mel_spec_db = mel_spec_db.reshape(1, _n_mels, -1).astype(np.float32)
+    # Reshape para [1, n_mels, 96]
+    mel_spec_db = mel_spec_db.reshape(1, _n_mels, 96).astype(np.float32)
 
     return mel_spec_db
 
