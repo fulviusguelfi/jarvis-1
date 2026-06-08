@@ -7,6 +7,14 @@ import signal
 import numpy as np
 from enum import Enum
 
+# Console Windows e cp1252: se o LLM emitir um caractere fora do cp1252 (ex.: emoji),
+# print() crasharia e mataria a resposta no meio. utf-8 + errors=replace evita isso.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from config import MARITACA_API_KEY, LLM_MODE, TTS_MODE
@@ -247,6 +255,13 @@ def main():
         from tts import _get_kokoro as _tts_init
     _tts_init()
 
+    # Pre-aquecer o LLM local: a VRAM sobe ja no startup e a 1a resposta nao espera o
+    # modelo carregar. Se a VRAM estourar, falha aqui com erro claro (sem fallback).
+    if LLM_MODE == "local":
+        from llm_local import ensure_server
+        print("[LLM] Pre-carregando llama-server (35B)... pode demorar.")
+        ensure_server()
+
     # Health check do mic
     print("Verificando microfone...")
     _check_mic()
@@ -267,10 +282,20 @@ def main():
     fsm.transition(JarvisState.IDLE, "startup")
 
     def handle_exit(sig, frame):
-        print("\n[Jarvis] Sessao encerrada.")
+        print("\n[Jarvis] Encerrando...")
+        if LLM_MODE == "local":
+            try:
+                from llm_local import stop_server
+                stop_server()  # mata o llama-server (evita orfao)
+            except Exception as e:
+                print(f"[Jarvis] erro ao parar llama-server: {e}")
         sys.exit(0)
 
     signal.signal(signal.SIGINT, handle_exit)
+    signal.signal(signal.SIGTERM, handle_exit)
+    # Fechar a janela do console no Windows envia SIGBREAK.
+    if hasattr(signal, "SIGBREAK"):
+        signal.signal(signal.SIGBREAK, handle_exit)
 
     # ========================================================================
     # Loop principal: FSM explicita

@@ -7,14 +7,21 @@ import os
 import subprocess
 import time
 import threading
+import atexit
 import requests
 import sys
 from typing import Generator
-from config import LLAMA_MODEL, SYSTEM_PROMPT
+from config import (
+    LLAMA_MODEL, SYSTEM_PROMPT, LLAMA_SERVER_PATH,
+    LLAMA_NCMOE, LLAMA_CTX, LLAMA_CTK, LLAMA_CTV, LLAMA_IS_MOE,
+)
 
 TOOLS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tools")
 
-if sys.platform.startswith("win"):
+# Binário do llama-server: prioriza LLAMA_SERVER_PATH (.env, ex.: build TurboQuant em A:).
+if LLAMA_SERVER_PATH:
+    LLAMA_SERVER = LLAMA_SERVER_PATH
+elif sys.platform.startswith("win"):
     LLAMA_SERVER = os.path.join(TOOLS_DIR, "llama.cpp", "llama-server.exe")
 else:
     LLAMA_SERVER = os.path.join(TOOLS_DIR, "llama.cpp/build/bin/llama-server")
@@ -41,50 +48,79 @@ def ensure_server() -> None:
         if _server_alive():
             return
 
+        if not os.path.exists(LLAMA_SERVER):
+            raise FileNotFoundError(
+                f"llama-server nao encontrado: {LLAMA_SERVER}\n"
+                f"Compile o fork TurboQuant ou ajuste LLAMA_SERVER_PATH no .env."
+            )
         if not os.path.exists(LLAMA_MODEL):
-            raise FileNotFoundError(f"Modelo não encontrado: {LLAMA_MODEL}")
+            raise FileNotFoundError(f"Modelo nao encontrado: {LLAMA_MODEL}")
 
         env = os.environ.copy()
         cmd = [
             LLAMA_SERVER,
             "--model", LLAMA_MODEL,
             "-ngl", "99",
-            "--flash-attn", "on",
-            "--ctx-size", "4096",
-            "--cache-type-k", "q8_0",
-            "--cache-type-v", "q8_0",
+            "--flash-attn", "on",          # turbo V-cache exige flash attention
+            "--ctx-size", str(LLAMA_CTX),
+            "--cache-type-k", LLAMA_CTK,    # turbo4 (TurboQuant)
+            "--cache-type-v", LLAMA_CTV,    # turbo3 (TurboQuant)
             "--batch-size", "512",
             "--ubatch-size", "128",
             "--host", _HOST,
             "--port", str(_PORT),
             "--parallel", "1",
-            "--verbose",  # MOSTRA output do llama-server (GPU em ação)
+            "--reasoning", "off",   # desliga o thinking do Qwen3.6 no servidor (corrige "nada de resposta")
+            "--verbose",
             "--jinja",
         ]
-        print("[llama-server] Iniciando com Vulkan...")
+        # MoE: empurra experts das primeiras N camadas p/ CPU (cabe na VRAM de 8GB).
+        if LLAMA_IS_MOE:
+            cmd[3:3] = ["--n-cpu-moe", str(LLAMA_NCMOE)]
+        print("[llama-server] Iniciando (TurboQuant + Vulkan)...")
+        print(f"[llama-server] Binario: {LLAMA_SERVER}")
         print(f"[llama-server] Modelo: {LLAMA_MODEL}")
-        print(f"[llama-server] GPU layers: 99 (máximo)")
+        print(f"[llama-server] ctx={LLAMA_CTX} ctk={LLAMA_CTK} ctv={LLAMA_CTV}"
+              + (f" n-cpu-moe={LLAMA_NCMOE}" if LLAMA_IS_MOE else ""))
         print("[llama-server] Carregando em VRAM (observe a VRAM do GPU subir)...")
-        _server_proc = subprocess.Popen(
-            cmd, env=env
-            # stdout/stderr visíveis para debug (removido DEVNULL)
-        )
+        _server_proc = subprocess.Popen(cmd, env=env)
 
-        for _ in range(90):
+        # 35B carrega devagar (mmap do disco + reserva de KV de contexto grande).
+        for _ in range(300):
             time.sleep(1)
+            if _server_proc.poll() is not None:
+                raise RuntimeError(
+                    f"llama-server encerrou no startup (exit={_server_proc.returncode}). "
+                    f"Veja o output acima (provavel OOM de VRAM: baixe LLAMA_CTX ou suba LLAMA_NCMOE)."
+                )
             if _server_alive():
                 print("[llama-server] Pronto.")
                 return
 
-        _server_proc.terminate()
-        raise RuntimeError("llama-server não iniciou em 90s")
+        stop_server()
+        raise RuntimeError("llama-server nao iniciou em 300s")
 
 
 def stop_server() -> None:
+    """Para o llama-server de forma graciosa; mata se nao encerrar. Idempotente."""
     global _server_proc
-    if _server_proc:
-        _server_proc.terminate()
-        _server_proc = None
+    proc = _server_proc
+    if proc is None:
+        return
+    _server_proc = None
+    try:
+        if proc.poll() is None:
+            proc.terminate()
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+    except Exception as e:
+        print(f"[llama-server] stop_server() — erro ao encerrar: {e}")
+
+
+# Garante que o llama-server nao fique orfao quando o processo Python sair.
+atexit.register(stop_server)
 
 
 class LocalLLMClient:
@@ -104,30 +140,40 @@ class LocalLLMClient:
         ensure_server()
 
         if user_message:
-            # /no_think desativa o modo reasoning do Qwen3 para respostas diretas
-            self.history.append({"role": "user", "content": f"{user_message} /no_think"})
+            self.history.append({"role": "user", "content": user_message})
 
         messages = [{"role": "system", "content": SYSTEM_PROMPT}] + self.history
 
         payload: dict = {
             "model": "local",
             "messages": messages,
-            "max_tokens": 512,
+            "max_tokens": 1024,
+            # Amostragem recomendada pelo model card (Qwen3.6 instruct/non-thinking).
+            # presence_penalty evita os loops de repeticao ("da da da...").
             "temperature": 0.7,
+            "top_p": 0.8,
+            "top_k": 20,
+            "presence_penalty": 1.5,
             "stream": True,
+            # Redundancia: alem do --reasoning off no servidor, pede thinking desligado.
+            "chat_template_kwargs": {"enable_thinking": False},
         }
         if self.tools:
             payload["tools"] = self.tools
 
-        full_response = ""
+        clean_response = ""   # resposta sem blocos <think> (vai pro historico e pro TTS)
         tool_calls: list[dict] = []
+        # Estado do filtro anti-<think> (defesa extra; --reasoning off ja deve limpar).
+        _inside_think = False
+        _hold = ""
+        _TAIL = 7  # cauda segurada p/ tags partidas entre chunks (len de <think>/</think>)
 
         with requests.post(
             f"{_BASE}/v1/chat/completions",
             json=payload,
             headers={"Authorization": "Bearer local"},
             stream=True,
-            timeout=60,
+            timeout=300,
         ) as resp:
             resp.raise_for_status()
             for line in resp.iter_lines():
@@ -151,9 +197,29 @@ class LocalLLMClient:
                 finish = chunk["choices"][0].get("finish_reason")
 
                 if delta.get("content"):
-                    text = delta["content"]
-                    full_response += text
-                    yield text
+                    _hold += delta["content"]
+                    emit = ""
+                    while _hold:
+                        if _inside_think:
+                            j = _hold.find("</think>")
+                            if j == -1:
+                                _hold = _hold[-_TAIL:] if len(_hold) > _TAIL else _hold
+                                break
+                            _hold = _hold[j + len("</think>"):]
+                            _inside_think = False
+                        else:
+                            i = _hold.find("<think>")
+                            if i == -1:
+                                if len(_hold) > _TAIL:
+                                    emit += _hold[:-_TAIL]
+                                    _hold = _hold[-_TAIL:]
+                                break
+                            emit += _hold[:i]
+                            _hold = _hold[i + len("<think>"):]
+                            _inside_think = True
+                    if emit:
+                        clean_response += emit
+                        yield emit
 
                 if delta.get("tool_calls"):
                     for tc in delta["tool_calls"]:
@@ -172,8 +238,13 @@ class LocalLLMClient:
                 if finish == "tool_calls":
                     pass
 
-        if full_response:
-            self.history.append({"role": "assistant", "content": full_response})
+        # Flush do que sobrou no buffer (resposta sem </think> pendente).
+        if _hold and not _inside_think:
+            clean_response += _hold
+            yield _hold
+
+        if clean_response:
+            self.history.append({"role": "assistant", "content": clean_response})
 
         if tool_calls:
             yield from self._handle_tool_calls(tool_calls)

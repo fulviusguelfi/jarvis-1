@@ -47,7 +47,25 @@ elif "4B" in _qwen_model_name:
 else:
     _qwen_subdir = "qwen3-8b"
 
-LLAMA_MODEL = os.path.join(MODELS_DIR, _qwen_subdir, _qwen_model_name)
+# Caminho do .gguf: override absoluto via LLAMA_MODEL_PATH (ex.: modelo no disco A:),
+# senão monta a partir de MODELS_DIR.
+_llama_model_override = os.environ.get("LLAMA_MODEL_PATH", "").strip()
+if _llama_model_override:
+    LLAMA_MODEL = _llama_model_override
+else:
+    LLAMA_MODEL = os.path.join(MODELS_DIR, _qwen_subdir, _qwen_model_name)
+
+# Binário do llama-server (TurboQuant + Vulkan). Sem fallback: se vazio, usa o padrão em tools/.
+LLAMA_SERVER_PATH = os.environ.get("LLAMA_SERVER_PATH", "").strip()
+
+# Flags do llama-server (defaults = vídeo TurboQuant).
+LLAMA_NCMOE = os.environ.get("LLAMA_NCMOE", "36").strip()
+LLAMA_CTX = os.environ.get("LLAMA_CTX", "4096").strip()
+LLAMA_CTK = os.environ.get("LLAMA_CTK", "q8_0").strip()
+LLAMA_CTV = os.environ.get("LLAMA_CTV", "q8_0").strip()
+
+# MoE (Mixture of Experts) detectado pelo nome do modelo — habilita --n-cpu-moe.
+LLAMA_IS_MOE = "35B" in os.path.basename(LLAMA_MODEL)
 
 # Modo LLM: "cloud" (Maritaca API) | "local" (llama-server + Vulkan)
 LLM_MODE = os.environ.get("LLM_MODE", "cloud")

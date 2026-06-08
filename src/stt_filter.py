@@ -68,7 +68,9 @@ def _is_likely_hallucination(text: str) -> bool:
     3. Contém blocklist
     4. Números repetidos ("123 123 123")
     """
-    if not text or len(text.strip()) < 5:
+    # Piso baixo: comandos curtos validos ("Sim", "Nao", "Pare") devem passar.
+    # (main.py ainda exige >= 3 chars para acionar o LLM.)
+    if not text or len(text.strip()) < 2:
         return True
 
     lower_text = text.lower()

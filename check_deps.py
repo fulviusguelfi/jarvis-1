@@ -43,6 +43,9 @@ deps = {
     "onnxruntime": None,
     "requests": None,
     "ctranslate2": None,
+    "librosa": None,        # mel-spectrogram p/ wake.py
+    "silero_vad": None,     # endpointing
+    "openwakeword": None,   # wake word
 }
 
 for dep, _ in deps.items():
@@ -61,30 +64,26 @@ TOOLS_DIR = os.path.join(BASE_DIR, "tools")
 check(f"Pasta models/", os.path.isdir(MODELS_DIR))
 check(f"Pasta tools/", os.path.isdir(TOOLS_DIR))
 
-# 5. Modelos
-print("\n[Modelos (HuggingFace)]")
-qwen_path = os.path.join(MODELS_DIR, "qwen3-8b", "Qwen3-8B-Q4_K_M.gguf")
+# 5. Modelos — usa os caminhos reais do config (.env)
+print("\n[Modelos]")
+sys.path.insert(0, os.path.join(BASE_DIR, "src"))
+try:
+    import config as _cfg
+    _model = _cfg.LLAMA_MODEL
+    _server = _cfg.LLAMA_SERVER_PATH or os.path.join(TOOLS_DIR, "llama.cpp", "llama-server.exe")
+except Exception as e:
+    _model = os.path.join(MODELS_DIR, "qwen3-8b", "Qwen3-8B-Q4_K_M.gguf")
+    _server = os.path.join(TOOLS_DIR, "llama.cpp", "llama-server.exe")
+    print(f"    [aviso] nao consegui ler config: {e}")
+
 piper_path = os.path.join(MODELS_DIR, "piper", "pt_BR-faber-medium", "pt_BR-faber-medium.onnx")
 
-check(
-    "Qwen3-8B GGUF",
-    os.path.exists(qwen_path),
-    f"Procurando: {qwen_path}"
-)
-check(
-    "Piper TTS",
-    os.path.exists(piper_path),
-    f"Procurando: {piper_path}"
-)
+check("Modelo LLM (.gguf)", os.path.exists(_model), f"Procurando: {_model}")
+check("Piper TTS", os.path.exists(piper_path), f"Procurando: {piper_path}")
 
-# 6. llama-server.exe
+# 6. llama-server (turbo ou padrao)
 print("\n[LLM (llama.cpp + Vulkan)]")
-llama_exe = os.path.join(TOOLS_DIR, "llama.cpp", "llama-server.exe")
-check(
-    "llama-server.exe",
-    os.path.exists(llama_exe),
-    f"Procurando: {llama_exe}"
-)
+check("llama-server", os.path.exists(_server), f"Procurando: {_server}")
 
 # 7. Config
 print("\n[Configuração]")

@@ -12,6 +12,7 @@ sounddevice>=0.4.6
 # --- Fase 1 (Fluidez) — implementado ---
 openwakeword>=0.6.0    # wake word "Hey Jarvis" (ONNX)
 silero-vad>=1.0.0      # endpointing + barge-in (ONNX)
+librosa>=0.10          # mel-spectrogram p/ wake.py (openWakeWord ONNX direto)
 
 # --- Fases futuras (planejado — ver docs/PLANO.md) ---
 # pynput         # automação teclado/mouse X11 (XTEST)
