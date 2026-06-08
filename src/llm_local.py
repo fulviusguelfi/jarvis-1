@@ -58,13 +58,16 @@ def ensure_server() -> None:
             "--host", _HOST,
             "--port", str(_PORT),
             "--parallel", "1",
-            "--log-disable",
+            "--verbose",  # MOSTRA output do llama-server (GPU em ação)
             "--jinja",
         ]
-        print("[llama-server] Carregando modelo em VRAM (pode demorar ~15s)...")
+        print("[llama-server] Iniciando com Vulkan...")
+        print(f"[llama-server] Modelo: {LLAMA_MODEL}")
+        print(f"[llama-server] GPU layers: 99 (máximo)")
+        print("[llama-server] Carregando em VRAM (observe a VRAM do GPU subir)...")
         _server_proc = subprocess.Popen(
-            cmd, env=env,
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+            cmd, env=env
+            # stdout/stderr visíveis para debug (removido DEVNULL)
         )
 
         for _ in range(90):
