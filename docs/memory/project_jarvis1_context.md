@@ -113,3 +113,45 @@ Com tool use implementado em Python ao redor do LLM.
 --cache-type-k q4_0 --cache-type-v q4_0
 --batch-size 512 --ubatch-size 128
 ```
+
+---
+
+## Decisão F1.5 — Modelo Final para Assistente Local (2026-06-09)
+
+### Qwen3-4B-Instruct-2507 (UD-Q8_K_XL) — ESCOLHIDO
+
+| Aspecto | Qwen3-4B-UD-Q8 | Qwen3-8B-Q4 |
+|--------|---|---|
+| **Footprint (Q8)** | 5.0 GB | 4.9 GB |
+| **VRAM 100%?** | ✅ Sim (sobra ~2GB) | ✅ Sim (sobra ~2GB) |
+| **RAM livre (16GB)** | ~10-11 GB | ~9-10 GB |
+| **Velocidade** | ~30-45 tok/s | ~18-28 tok/s |
+| **Qualidade (MMLU-Pro)** | 69.6 | ~70 estimado |
+| **BFCL (tool calling)** | 61.9 | ~60 estimado |
+| **Vantagem** | **1.5x mais rápido; DROP-IN** | Margen de qualidade mínimo |
+
+**Decision:** Qwen3-4B-Instruct-2507 (UD-Q8_K_XL).
+- Benchmark oficial (HF card) mostra que empata/supera Qwen3-30B-A3B no MMLU-Pro e BFCL.
+- Deixa a máquina **usável**. Sem 35B MoE que ocupava 18GB + overhead, o PC fica livre pra outras tarefas.
+- **DROP-IN:** mesmo template que o 8B, mesmo --reasoning off, mesmas tools.
+- **Testado:** 17/17 testes verdes, startup ~15s, resposta limpa ~1-2s.
+
+**Alternativas descartadas:**
+- Qwen3-8B: similar, mas um pouco mais lento.
+- Gemma 4 E4B: Apache-2.0 + multilingue forte, MAS Per-Layer Embeddings infla memória (Q8 ~9-10GB não cabe na VRAM, forçado ao Q4).
+- MiniMax M2/M1: escala datacenter (229-456B) — impossível local (mínimo 64GB).
+
+**Config final (.env):**
+```
+LLM_MODE=local
+QWEN_MODEL=Qwen3-4B-Instruct-2507-UD-Q8_K_XL
+LLAMA_SERVER_PATH=    # vazio = usa padrão tools/llama.cpp/
+LLAMA_MODEL_PATH=A:\Qwen3-4B-Instruct-2507-UD-Q8_K_XL.gguf
+LLAMA_CTX=16384
+```
+
+**Tags Git:**
+- `v0.2.1`: Fase 1 complete com testes verdes (17/17).
+- `35b-turboquant`: Qwen3.6-35B-A3B estado funcionante (preservado para tarefas especiais).
+
+**Próxima fase (Phase 2):** Tool calling template + inline detection (Qwen3 format).
