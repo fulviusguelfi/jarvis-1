@@ -14,17 +14,21 @@ Desenvolvimento solo. Hardware fixo: Ryzen 5 4500 · 16GB RAM · **RX 580 8GB** 
 - `docs/memory/` — contexto, hardware, pesquisa
 
 ## Estado Atual — v0.2.0 (Fase 1 concluída)
-Pipeline end-to-end funcional com **wake word determinístico** e **35B MoE no RX 580**:
+Pipeline end-to-end funcional com **wake word determinístico** e LLM 4B denso (leve, deixa a máquina livre):
 - **Wake word:** openWakeWord hey_jarvis (ONNX classificador, 0-1 score) — `src/wake.py`
 - **STT:** faster-whisper `small` (CPU, pt-BR, apenas sobre fala válida) — `src/stt.py`
 - **VAD:** Silero VAD para endpointing (fim de fala detectado em <300ms) — `src/vad.py`
-- **LLM:** Qwen3.6-35B-A3B via TurboQuant (turbo4/turbo3 KV cache) + Vulkan (RX 580) — `src/llm_local.py`
+- **LLM:** Qwen3-4B-Instruct-2507 (Q8) via llama-server **padrão** + Vulkan (RX 580) — `src/llm_local.py`
+  - Denso, cabe 100% na VRAM (~5GB). Binário padrão `tools/llama.cpp/` — sem turbo/flash-attn/n-cpu-moe.
 - **Amostragem:** top_k=20, top_p=0.8, presence_penalty=1.5 (model card) — sem repetição
 - **TTS:** Piper `pt_BR-faber-medium` — `src/tts_piper.py`
 - **Áudio:** sounddevice, device padrão do SO + auto-detecção Jabra — `src/audio.py`
-- **Orquestração:** openWakeWord → Silero VAD → STT → 35B LLM → TTS — `src/main.py` (FSM 7 estados)
+- **Orquestração:** openWakeWord → Silero VAD → STT → LLM → TTS — `src/main.py` (FSM 7 estados)
 
-**Fase 1 concluída:** determinismo (sem fallback invisível), fluência (~5-10 tok/s), voz pt-BR coerente.
+**Fase 1 concluída:** determinismo (sem fallback invisível), ~15-20 tok/s, ~15s startup, voz pt-BR coerente.
+
+> O modelo MoE 35B (Qwen3.6-35B-A3B via TurboQuant) está **preservado na tag `35b-turboquant`**.
+> Para restaurar: `git checkout 35b-turboquant` (exige o binário turbo em `A:\llama-cpp-turboquant\`).
 
 ## Arquitetura (camadas, fluxo top-down)
 ```
@@ -72,26 +76,27 @@ tools/         — TOOL_DEFINITIONS + TOOL_HANDLERS (run_shell etc.)
 ## Stack
 - Python **3.12** (não usar o 3.14 do sistema), venv em `.venv`
 - faster-whisper, openWakeWord (hey_jarvis_v0.1.onnx ONNX direto), silero-vad, piper-tts, sounddevice, numpy, librosa
-- **llama-cpp-turboquant** `llama-server.exe` (fork TheTom, branch feature/turboquant-kv-cache, build MSVC+Vulkan)
-  em `A:\llama-cpp-turboquant\build\bin\Release\`
-  - Suporte: turbo4 (K, ~4.5b), turbo3 (V, ~3.5b) — **só neste fork**, não em ggml-org main
-  - Vulkan (AMD RX 580): `--cache-type-k turbo4 --cache-type-v turbo3 --n-cpu-moe 32+ --flash-attn on`
+- **llama-server padrão** (`tools/llama.cpp/llama-server.exe`, build win-vulkan-x64) — roda o 4B denso
+  - Modelo: `Qwen3-4B-Instruct-2507-UD-Q8_K_XL.gguf` (Q8, ~5GB, cabe 100% na VRAM)
+  - Flags: `-ngl 99 --ctx-size 16384 --reasoning off --jinja` (KV f16; sem turbo/flash-attn/n-cpu-moe)
+  - O modelo/binário vivem em `A:\` (temporário, fora do git). `.env` aponta os caminhos.
 - pytest (testes), ruff (lint)
 
-## Orçamentos de Latência (Fase 1 — "Fluidez", verificado com 35B A3B)
+## Orçamentos de Latência (Fase 1 — "Fluidez", verificado com Qwen3-4B Q8)
 ```
 Detecção de wake word (por frame 80ms):           < 50ms   (openWakeWord ONNX CPU)
 Endpoint de fim de fala (Silero VAD):              < 300ms  após silêncio
 STT de comando (~3s áudio, Whisper small):         < 1.5s   (CPU)
-LLM 1º token (Qwen3.6-35B-A3B TurboQuant Vulkan):  < 2s     (startup ~100s first-ever)
-LLM tokens quente (flow):                           5-10 tok/s (turbo KV + n-cpu-moe 32)
+LLM startup (carga do 4B na VRAM):                 ~15s     (1x por sessão)
+LLM tokens (flow):                                  ~15-20 tok/s (Q8 na VRAM)
+LLM resposta curta (fim a fim):                     ~1-2s
 TTS 1ª sentença (Piper RTF ~0.06):                 < 300ms
-Tempo percebido (fim da fala → 1º áudio resposta): 7-15s    (realista com 35B)
 ```
-**Nota:** Startup (~100s) paga no 1º uso da sessão (paginação expert do NVMe em mmap).
-Recomendado manter servidor warm entre perguntas ou usar modelo menor (8B ~1s/token).
 
-## Patch Crítico: RX 580 + TurboQuant Flash Attention
+## Patch Crítico: RX 580 + TurboQuant Flash Attention  (SÓ p/ o 35B — tag `35b-turboquant`)
+
+> O setup atual (4B denso + binário padrão) **NÃO usa flash attention nem turbo**, então este
+> patch é irrelevante para o dia a dia. Só importa se reconstruir o build turbo para rodar o 35B.
 
 **Arquivo:** `A:\llama-cpp-turboquant\ggml\src\ggml-vulkan\ggml-vulkan.cpp` (linha ~2261)
 

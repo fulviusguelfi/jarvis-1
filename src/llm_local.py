@@ -11,14 +11,11 @@ import atexit
 import requests
 import sys
 from typing import Generator
-from config import (
-    LLAMA_MODEL, SYSTEM_PROMPT, LLAMA_SERVER_PATH,
-    LLAMA_NCMOE, LLAMA_CTX, LLAMA_CTK, LLAMA_CTV, LLAMA_IS_MOE,
-)
+from config import LLAMA_MODEL, SYSTEM_PROMPT, LLAMA_SERVER_PATH, LLAMA_CTX
 
 TOOLS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tools")
 
-# Binário do llama-server: prioriza LLAMA_SERVER_PATH (.env, ex.: build TurboQuant em A:).
+# Binário do llama-server: usa LLAMA_SERVER_PATH se setado, senão o padrão em tools/.
 if LLAMA_SERVER_PATH:
     LLAMA_SERVER = LLAMA_SERVER_PATH
 elif sys.platform.startswith("win"):
@@ -51,54 +48,45 @@ def ensure_server() -> None:
         if not os.path.exists(LLAMA_SERVER):
             raise FileNotFoundError(
                 f"llama-server nao encontrado: {LLAMA_SERVER}\n"
-                f"Compile o fork TurboQuant ou ajuste LLAMA_SERVER_PATH no .env."
+                f"Verifique tools/llama.cpp/ ou ajuste LLAMA_SERVER_PATH no .env."
             )
         if not os.path.exists(LLAMA_MODEL):
             raise FileNotFoundError(f"Modelo nao encontrado: {LLAMA_MODEL}")
 
         env = os.environ.copy()
+        # Modelo denso pequeno cabe 100% na VRAM do RX 580: offload total, KV f16
+        # padrao (sem flash-attn -> sem o problema de subgroup do Vulkan na RX 580).
         cmd = [
             LLAMA_SERVER,
             "--model", LLAMA_MODEL,
             "-ngl", "99",
-            "--flash-attn", "on",          # turbo V-cache exige flash attention
             "--ctx-size", str(LLAMA_CTX),
-            "--cache-type-k", LLAMA_CTK,    # turbo4 (TurboQuant)
-            "--cache-type-v", LLAMA_CTV,    # turbo3 (TurboQuant)
             "--batch-size", "512",
             "--ubatch-size", "128",
             "--host", _HOST,
             "--port", str(_PORT),
             "--parallel", "1",
-            "--reasoning", "off",   # desliga o thinking do Qwen3.6 no servidor (corrige "nada de resposta")
-            "--verbose",
+            "--reasoning", "off",   # garante resposta direta (sem <think>)
             "--jinja",
         ]
-        # MoE: empurra experts das primeiras N camadas p/ CPU (cabe na VRAM de 8GB).
-        if LLAMA_IS_MOE:
-            cmd[3:3] = ["--n-cpu-moe", str(LLAMA_NCMOE)]
-        print("[llama-server] Iniciando (TurboQuant + Vulkan)...")
+        print("[llama-server] Iniciando (Vulkan)...")
         print(f"[llama-server] Binario: {LLAMA_SERVER}")
-        print(f"[llama-server] Modelo: {LLAMA_MODEL}")
-        print(f"[llama-server] ctx={LLAMA_CTX} ctk={LLAMA_CTK} ctv={LLAMA_CTV}"
-              + (f" n-cpu-moe={LLAMA_NCMOE}" if LLAMA_IS_MOE else ""))
-        print("[llama-server] Carregando em VRAM (observe a VRAM do GPU subir)...")
+        print(f"[llama-server] Modelo: {LLAMA_MODEL}  (ctx={LLAMA_CTX})")
         _server_proc = subprocess.Popen(cmd, env=env)
 
-        # 35B carrega devagar (mmap do disco + reserva de KV de contexto grande).
-        for _ in range(300):
+        for _ in range(120):
             time.sleep(1)
             if _server_proc.poll() is not None:
                 raise RuntimeError(
                     f"llama-server encerrou no startup (exit={_server_proc.returncode}). "
-                    f"Veja o output acima (provavel OOM de VRAM: baixe LLAMA_CTX ou suba LLAMA_NCMOE)."
+                    f"Veja o output acima (provavel falta de VRAM: baixe LLAMA_CTX no .env)."
                 )
             if _server_alive():
                 print("[llama-server] Pronto.")
                 return
 
         stop_server()
-        raise RuntimeError("llama-server nao iniciou em 300s")
+        raise RuntimeError("llama-server nao iniciou em 120s")
 
 
 def stop_server() -> None:
