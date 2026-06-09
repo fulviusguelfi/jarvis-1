@@ -2,6 +2,7 @@
 """Jarvis - assistente de voz local. Stack: Whisper + Qwen3-8B Vulkan + Piper TTS + FSM."""
 import sys
 import os
+import time
 import threading
 import signal
 import numpy as np
@@ -23,13 +24,14 @@ from audio import (
     record_until_silence,
     read_mic_chunk,
     stop_mic_stream,
+    drain_mic,
     play_samples,
     play_samples_interruptible,
     mic_vad_background,
     start_bt_keepalive,
     stop_bt_keepalive,
 )
-from config import AUDIO_SAMPLE_RATE
+from config import AUDIO_SAMPLE_RATE, POST_TTS_SETTLE_MS
 from stt import transcribe, _get_model as _get_whisper
 from wake import detect_wake_word  # F1.1: openWakeWord
 from mic_health import monitor_mic_health, play_mic_dead_notification  # F1.4: Mic health
@@ -119,6 +121,13 @@ def _ack():
     # Fala curta de confirmacao
     samples, sr = synthesize("Sim?")
     play_samples(samples, sr)
+
+
+def _settle_after_tts() -> None:
+    """F1.6: espera o eco do TTS dissipar e drena o mic antes de reabrir a escuta.
+    Mata o auto-disparo ('Sim?' duplo) e as transcricoes vazias '[STT] 0.5s -> '."""
+    time.sleep(POST_TTS_SETTLE_MS / 1000.0)
+    drain_mic()
 
 
 def _is_dismiss(text: str) -> bool:
@@ -319,8 +328,9 @@ def main():
 
         # ====== ESTADO: LISTENING_COMMAND ======
         if fsm.get_state() == JarvisState.LISTENING_COMMAND:
+            _settle_after_tts()  # deixa o "Sim?" dissipar antes de escutar
             print("[MIC] Pode falar...")
-            wav_path = record_until_silence(max_duration=10.0)
+            wav_path = record_until_silence()  # teto/endpointing do config (F1.6)
             fsm.transition(JarvisState.PROCESSING, "transcrevendo comando")
 
             text = transcribe(wav_path)
@@ -366,10 +376,11 @@ def main():
         # Janela de conversa: ouve proximas perguntas sem precisar dizer "Jarvis"
         # Sai da janela se dispensado ou sem fala por 10s
         while fsm.get_state() == JarvisState.CONVERSATION:
+            _settle_after_tts()  # F1.6: drena o eco da resposta antes de escutar
             print("[MIC] Pode continuar...")
             fsm.transition(JarvisState.LISTENING_FOLLOW, "aguardando proxima pergunta")
 
-            wav_follow = record_until_silence(max_duration=10.0)
+            wav_follow = record_until_silence()  # teto/endpointing do config (F1.6)
             fsm.transition(JarvisState.PROCESSING, "transcrevendo seguimento")
 
             text_follow = transcribe(wav_follow)
@@ -377,6 +388,7 @@ def main():
 
             if not text_follow or len(text_follow.strip()) < 3:
                 print("[sem fala - voltando ao modo de espera]")
+                drain_mic()  # limpa antes de voltar a escutar wake (evita re-trigger)
                 fsm.transition(JarvisState.IDLE, "timeout em conversa continua")
                 break
 
