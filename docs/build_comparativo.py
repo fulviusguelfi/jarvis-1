@@ -129,9 +129,49 @@ M = [
   "Sim","~13 GB","~80-100",
   "n/d","n/d","n/d","n/d","Fraco","Nativo (limitado)","Basico",
   "Minusculo; so p/ wake/roteamento, nao p/ conversa real","HF Qwen3"],
-]
 
-HEADERS = ["Modelo","Dev","Arquitetura","Params\nTotais (B)","Params\nAtivos (B)","Contexto",
+ # ---- Avaliados a pedido (jun/2026): MiniMax e Gemma 4 ----
+ ["MiniMax-M1","MiniMax","Hibrido MoE (lightning attn)",456,45.9,"1M","Apache-2.0",250,
+  "Nao","~0 (impossivel)","n/a",
+  "n/d","n/d","n/d","n/d","Bom (multiling.)","Nativo (agentic)","Muito Alto",
+  "Escala datacenter (456B totais): impossivel local; so servidor/API","arXiv 2506.13585"],
+
+ ["MiniMax-M2","MiniMax","MoE (10B ativos)",229,10.0,"196K","MIT",130,
+  "Nao","~0 (impossivel)","n/a",
+  "n/d","n/d","n/d","n/d","Bom (multiling.)","Nativo (agentic forte)","Muito Alto",
+  "229B totais: minimo ~64GB (IQ1_S). Impossivel neste hardware; servidor/API","HF unsloth/MiniMax-M2-GGUF"],
+
+ ["Gemma 4 31B Dense","Google","Densa",31,31,"256K","Apache-2.0",19,
+  "Nao","~0 livre","~2-3",
+  "n/d","n/d","n/d","n/d (t2-bench 86.4)","Excelente (140 idiomas)","Nativo (FC)","Muito Alto",
+  "Top de qualidade aberta (AIME 89.2), mas 31B denso pesa demais aqui","blog.google/gemma-4"],
+
+ ["Gemma 4 26B-A4B (MoE)","Google","MoE (3.8B ativos)",26,3.8,"256K","Apache-2.0",16,
+  "Nao","~0-2 GB","~3-5",
+  "n/d","n/d","n/d","n/d","Excelente (140 idiomas)","Nativo (FC)","Alto",
+  "MoE forte (AIME 88.3), mas 26B totais nao cabem (mesmo trap do 35B)","blog.google/gemma-4"],
+
+ ["Gemma 4 12B","Google","Densa (multimodal)",12,12,"128K","Apache-2.0",7.3,
+  "Parcial","~7-8 GB","~12-18",
+  "n/d","n/d","n/d","n/d","Excelente (140 idiomas)","Nativo (FC)","Alto",
+  "Multimodal forte; cabe quase 100% com ctx modesto; FC nativo","ai.google.dev/gemma"],
+
+ ["Gemma 4 E4B","Google","Densa PLE (multimodal)",4.5,4.5,"128K","Apache-2.0",5.0,
+  "Q4 so","~10-11 GB","~25-40",
+  "n/d","n/d","n/d","n/d","Excelente (140 idiomas)","Nativo (FC)","Medio-Alto",
+  "Rival direto do Qwen3-4B; PLE infla memoria (Q8 ~9-10GB nao cabe -> roda Q4); template/FC diferentes","ai.google.dev/gemma"],
+
+ ["Gemma 4 E2B","Google","Densa PLE (multimodal)",2.3,2.3,"128K","Apache-2.0",2.9,
+  "Sim","~11-12 GB","~40-60",
+  "n/d","n/d","n/d","n/d","Excelente (140 idiomas)","Nativo (FC)","Medio",
+  "Leve e multimodal; otimo multilingue; menos capaz que o E4B","ai.google.dev/gemma"],
+]
+# Mantem o modelo ATUAL no topo; ordena o resto por params totais (desc).
+_base = [r for r in M if "ATUAL" in r[0]]
+_rest = sorted([r for r in M if "ATUAL" not in r[0]], key=lambda r: -float(r[3]))
+M = _base + _rest
+
+HEADERS =["Modelo","Dev","Arquitetura","Params\nTotais (B)","Params\nAtivos (B)","Contexto",
  "Licenca","GGUF\nQ4_K_M (GB)","Cabe 100%\nVRAM 8GB?","RAM livre\nest. (16GB)","Veloc. est.\nRX580 (tok/s)",
  "MMLU-Pro","GPQA","IFEval","BFCL\n(tool)","PT-BR /\nMultilingue","Tool\ncalling","Qualidade\n(tier)",
  "Veredito p/ assistente de voz local","Fonte\n(benchmarks)"]
@@ -287,6 +327,12 @@ rr = block(wa, rr, "4. Nota de migracao (esforco no codigo)", [
  "- Modelos densos <=8B cabem 100% na VRAM e NAO precisam do build TurboQuant nem do --n-cpu-moe (aquilo so era necessario por causa do MoE gigante). Pode-se usar ate o llama-server padrao.",
 ])
 
+rr = block(wa, rr, "4b. Avaliados a pedido: Gemma 4 e MiniMax (jun/2026)", [
+ "MiniMax (M1/M2/M2.1): FORA por hardware, nao por qualidade. Sao modelos de escala datacenter (229B-456B totais). Mesmo com 10B ativos, os totais tem que caber na memoria: o menor GGUF do M2 (IQ1_S, 1-bit) ja sao 64 GB. No RX 580 (8GB+16GB) e fisicamente impossivel -> so vLLM/SGLang em servidor ou API. E o mesmo erro do 35B, 3-13x pior.",
+ "Gemma 4 (mar/2026): virou concorrente legitimo (agora Apache-2.0, function calling nativo, GGUF drop-in). O E4B e o rival direto do Qwen3-4B. Mesmo assim o Qwen vence NESTE caso por 3 motivos: (1) Q8 cabe nos 8GB de VRAM, enquanto o E4B usa Per-Layer Embeddings que inflam a memoria (Q8 ~9-10GB nao cabe -> roda Q4, qualidade menor); (2) Qwen e drop-in no codigo atual (Gemma exige outro chat template e outro formato de tool calling); (3) Qwen3-4B denso e maduro no llama.cpp/Vulkan, enquanto o PLE do Gemma 4 e arquitetura nova (risco de repetir a dor bleeding-edge do 35B).",
+ "Onde o Gemma 4 PODE ganhar: PT-BR/multilingue (140 idiomas, tradicionalmente forte). Se a fluencia em portugues virar prioridade #1, vale testar o E4B aceitando Q4 + mexida no codigo.",
+], title_color="7F6000")
+
 rr = block(wa, rr, "5. Conclusao", [
  "Para um assistente de VOZ local que deve COEXISTIR com o resto da maquina, o 35B-A3B e exagero: gasta 8x mais memoria para uma qualidade que um Qwen3-4B-Instruct-2507 entrega cabendo inteiro na VRAM.",
  "Recomendacao: migrar para Qwen3-4B-Instruct-2507 (ja baixado, drop-in). Manter o 35B disponivel apenas para tarefas pontuais de coding agentico que justifiquem ocupar a maquina toda.",
@@ -317,6 +363,10 @@ FONTES = [
  ["Llama 3.2 (1B/3B) + Llama 3.1 8B","https://huggingface.co/meta-llama/Llama-3.2-3B-Instruct  |  arXiv:2407.21783"],
  ["Ministral 3 (8B) paper","https://arxiv.org/abs/2601.08584"],
  ["Llama 3.1 8B — analise comparativa","https://artificialanalysis.ai/models/llama-3-1-instruct-8b"],
+ ["Gemma 4 (anuncio oficial)","https://blog.google/innovation-and-ai/technology/developers-tools/gemma-4/"],
+ ["Gemma 4 (specs E2B/E4B, PLE, function calling, licenca)","https://ai.google.dev/gemma/docs/core"],
+ ["MiniMax-M2 GGUF (tamanhos / VRAM minima)","https://huggingface.co/unsloth/MiniMax-M2-GGUF"],
+ ["MiniMax-M1 (456B, lightning attention) paper","https://arxiv.org/abs/2506.13585"],
 ]
 rf = 3
 for nome, url in FONTES:
