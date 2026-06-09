@@ -1,10 +1,10 @@
 """Silero VAD - Voice Activity Detection para endpointing preciso.
 
-F1.2: Substitui RMS em record_until_silence() por Silero VAD (ONNX).
+F1.2: Substitui RMS em record_until_silence() por Silero VAD (torch JIT).
 Detecta fim de fala com precisao, elimina tempo morto de 1.2s -> ~300ms.
 """
 import numpy as np
-from pathlib import Path
+import torch
 
 # Lazy load
 _model = None
@@ -12,17 +12,10 @@ _sample_rate = 16000
 
 
 def _get_model():
-    """Carrega modelo Silero VAD (lazy load)."""
+    """Carrega modelo Silero VAD (lazy load) — torch JIT."""
     global _model
     if _model is not None:
         return _model
-
-    try:
-        import onnxruntime as ort
-    except ImportError:
-        raise ImportError(
-            "onnxruntime nao instalado. Execute: pip install onnxruntime"
-        )
 
     try:
         import silero_vad
@@ -31,8 +24,8 @@ def _get_model():
             "silero-vad nao instalado. Execute: pip install silero-vad"
         )
 
-    # Silero VAD carrega automaticamente o modelo ONNX
-    _model = silero_vad.load_silero_vad()
+    # Silero VAD: carrega modelo JIT (onnx=False, default). Espera torch.Tensor.
+    _model = silero_vad.load_silero_vad(onnx=False)
     return _model
 
 
@@ -44,13 +37,17 @@ def detect_voice(
     """
     Detecta se ha voz nos frames de audio.
 
+    Nota: Silero v6 exige exatamente 512 samples @16kHz ou 256 @8kHz.
+    Se audio_frames for maior, processa em chunks e retorna True se qualquer
+    chunk passa do threshold.
+
     Args:
         audio_frames: numpy array (mono, int16 ou float32)
         sample_rate: taxa de amostragem
         threshold: limiar de probabilidade (0-1)
 
     Returns:
-        True se ha voz com confianca > threshold
+        True se ha voz com confianca > threshold (em qualquer chunk)
     """
     model = _get_model()
 
@@ -60,13 +57,28 @@ def detect_voice(
     else:
         audio = audio_frames.astype(np.float32)
 
-    # Silero VAD espera tensor ONNX, usar o wrapper
+    # Silero v6: janela fixa (512 @16kHz, 256 @8kHz)
+    chunk_size = 512 if sample_rate == 16000 else 256
+
     try:
-        # Modo simples: processar frame inteiro
-        confidence = model(audio, sample_rate)
-        return confidence > threshold
+        # Se audio e menor que chunk_size, pad com zeros
+        if len(audio) < chunk_size:
+            audio = np.pad(audio, (0, chunk_size - len(audio)), mode='constant')
+
+        # Processar em chunks; retorna True se qualquer chunk passa do threshold
+        for i in range(0, len(audio), chunk_size):
+            chunk = audio[i:i+chunk_size]
+            if len(chunk) < chunk_size:
+                chunk = np.pad(chunk, (0, chunk_size - len(chunk)), mode='constant')
+
+            audio_tensor = torch.from_numpy(chunk).float()
+            confidence = model(audio_tensor, sample_rate)
+            if float(confidence) > threshold:
+                return True
+
+        return False
+
     except Exception as e:
-        # Fallback: se erro, assumir silencio (conservador)
         print(f"[vad] erro ao rodar Silero VAD: {e}")
         return False
 
@@ -75,7 +87,10 @@ def get_confidence(
     audio_frames: np.ndarray,
     sample_rate: int = 16000
 ) -> float:
-    """Retorna score bruto do Silero VAD (0-1) para debug."""
+    """
+    Retorna score bruto do Silero VAD (0-1) para debug.
+    Se audio > chunk_size, processa o 1º chunk.
+    """
     model = _get_model()
 
     if audio_frames.dtype == np.int16:
@@ -83,8 +98,16 @@ def get_confidence(
     else:
         audio = audio_frames.astype(np.float32)
 
+    chunk_size = 512 if sample_rate == 16000 else 256
+
     try:
-        confidence = model(audio, sample_rate)
+        # Pegar 1º chunk (ou pad se menor)
+        chunk = audio[:chunk_size]
+        if len(chunk) < chunk_size:
+            chunk = np.pad(chunk, (0, chunk_size - len(chunk)), mode='constant')
+
+        audio_tensor = torch.from_numpy(chunk).float()
+        confidence = model(audio_tensor, sample_rate)
         return float(confidence)
     except Exception:
         return 0.0
@@ -117,38 +140,47 @@ def record_until_silence_vad(
     silence_start = None
     start = time.time()
     spoke = False
-    chunk_size = int(sample_rate * 0.08)  # 80ms chunks para Silero
+    capture_chunk = int(sample_rate * 0.08)  # 80ms p/ captura (sounddevice)
+    vad_chunk_size = 512 if sample_rate == 16000 else 256  # Silero exige tamanho exato
 
     try:
+        vad_buffer = np.array([], dtype=np.float32)
+
         while True:
             elapsed = time.time() - start
             if elapsed >= max_duration:
                 break
 
-            data, _ = stream.read(chunk_size)
+            data, _ = stream.read(capture_chunk)
             frames.append(data)
 
             # Normalizar para float32 [-1, 1]
             audio = data.astype(np.float32) / 32768.0
 
-            # Silero VAD
-            try:
-                confidence = model(audio, sample_rate)
-            except Exception:
-                confidence = 0.0
+            # Acumular no buffer VAD
+            vad_buffer = np.concatenate([vad_buffer, audio])
 
-            # Log para debug (pode remover em producao)
-            # print(f"[vad-debug] confidence={confidence:.2f}")
+            # Processar chunks de VAD enquanto ha buffer suficiente
+            confidence = 0.0
+            while len(vad_buffer) >= vad_chunk_size:
+                chunk = vad_buffer[:vad_chunk_size]
+                vad_buffer = vad_buffer[vad_chunk_size:]
 
-            # Detectar transicao voz -> silencio
-            if confidence > silence_threshold:
-                spoke = True
-                silence_start = None
-            elif spoke:
-                if silence_start is None:
-                    silence_start = time.time()
-                elif time.time() - silence_start >= min_silence_duration:
-                    break
+                try:
+                    audio_tensor = torch.from_numpy(chunk).float()
+                    confidence = float(model(audio_tensor, sample_rate))
+                except Exception:
+                    confidence = 0.0
+
+                # Detectar transicao voz -> silencio
+                if confidence > silence_threshold:
+                    spoke = True
+                    silence_start = None
+                elif spoke:
+                    if silence_start is None:
+                        silence_start = time.time()
+                    elif time.time() - silence_start >= min_silence_duration:
+                        return frames
 
     except Exception as e:
         print(f"[audio-vad] erro durante gravacao: {e}")

@@ -39,7 +39,19 @@ except ImportError:
 # ============================================================================
 
 SAMPLE_RATE = 16000
-DURATION_SECS = 0.5  # 80ms frames sao ideais, mas deixar um pouco maior
+DURATION_SECS = 2.0  # >1.4s para encher o buffer de embedding do openWakeWord
+
+
+@pytest.fixture(autouse=True)
+def _reset_wake():
+    """Zera o buffer de streaming entre testes (independencia)."""
+    if HAS_OPENWAKEWORD:
+        try:
+            import wake
+            wake.reset()
+        except Exception:
+            pass
+    yield
 
 
 @pytest.fixture
@@ -52,13 +64,11 @@ def silence_audio():
 
 @pytest.fixture
 def noise_audio():
-    """Ruido branco: gaussiano aleatorio."""
+    """Ruido branco: gaussiano clipado em int16."""
     if not HAS_OPENWAKEWORD:
         pytest.skip("openWakeWord nao instalado")
-    return np.random.randn(int(SAMPLE_RATE * DURATION_SECS)).astype(np.float32)
-    # Converter para int16 com clipping
-    clipped = np.clip(noise, -1, 1) * 32767
-    return clipped.astype(np.int16)
+    noise = np.random.randn(int(SAMPLE_RATE * DURATION_SECS)).astype(np.float32)
+    return (np.clip(noise, -1, 1) * 32767).astype(np.int16)
 
 
 @pytest.fixture
