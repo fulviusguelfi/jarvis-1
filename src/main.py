@@ -259,7 +259,7 @@ def main():
     # modelo carregar. Se a VRAM estourar, falha aqui com erro claro (sem fallback).
     if LLM_MODE == "local":
         from llm_local import ensure_server
-        print("[LLM] Pre-carregando llama-server (35B)... pode demorar.")
+        print("[LLM] Pre-carregando llama-server... aguarde.")
         ensure_server()
 
     # Health check do mic

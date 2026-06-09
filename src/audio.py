@@ -65,10 +65,9 @@ def read_mic_chunk(seconds: float = 2.5) -> bytes:
         data, overflowed = stream.read(chunk_samples)
         if overflowed:
             print("[audio] aviso: buffer overflow no mic")
-        print("[audio-debug] Lido {} samples em {:.1f}s".format(len(data), seconds))
         return data.tobytes()
     except Exception as e:
-        print("[audio-debug] ERRO ao ler mic: {}".format(e))
+        print("[audio] erro ao ler mic: {}".format(e))
         return b'\x00' * (chunk_samples * 2)
 
 

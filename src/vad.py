@@ -154,10 +154,11 @@ def record_until_silence_vad(
             data, _ = stream.read(capture_chunk)
             frames.append(data)
 
-            # Normalizar para float32 [-1, 1]
-            audio = data.astype(np.float32) / 32768.0
+            # Normalizar para float32 [-1, 1] e garantir 1D
+            # (sounddevice retorna shape (N, channels) — flatten para (N,))
+            audio = data.astype(np.float32).flatten() / 32768.0
 
-            # Acumular no buffer VAD
+            # Acumular no buffer VAD (sempre 1D)
             vad_buffer = np.concatenate([vad_buffer, audio])
 
             # Processar chunks de VAD enquanto ha buffer suficiente
