@@ -51,6 +51,8 @@ required = {
     "silero_vad": "pip install silero-vad",
     "faster_whisper": "pip install faster-whisper",
     "piper": "pip install piper-tts",
+    "onnxruntime": "pip install onnxruntime",
+    "transformers": "pip install transformers",  # Smart Turn v3 (WhisperFeatureExtractor)
 }
 
 for module, install_cmd in required.items():
@@ -90,6 +92,29 @@ if _cfg.LLM_MODE == "local":
         sys.exit(1)
 else:
     print(f"      [INFO] LLM_MODE={_cfg.LLM_MODE} (nao-local) — pulando checagem do llama-server.")
+
+# F1.6.2: Smart Turn v3 (endpoint semantico) — ONNX ~8MB
+print("[5/5] Verificando Smart Turn v3 (endpoint semantico)...")
+_turn_dir = models_dir / "smart-turn"
+_turn_model = _turn_dir / "smart-turn-v3.2-cpu.onnx"
+if _turn_model.exists():
+    print(f"      [OK] JA EXISTE: {_turn_model} ({_turn_model.stat().st_size/1024:.0f} KB)")
+else:
+    print(f"      [FALTA] Baixando {_turn_model.name} de pipecat-ai/smart-turn-v3...")
+    _turn_dir.mkdir(parents=True, exist_ok=True)
+    _url = "https://huggingface.co/pipecat-ai/smart-turn-v3/resolve/main/smart-turn-v3.2-cpu.onnx"
+    try:
+        import requests
+        _r = requests.get(_url, timeout=120, stream=True)
+        _r.raise_for_status()
+        with open(_turn_model, "wb") as _f:
+            for _ch in _r.iter_content(8192):
+                _f.write(_ch)
+        print(f"      [OK] Baixado ({_turn_model.stat().st_size/1024:.0f} KB)")
+    except Exception as _e:
+        print(f"      [ERRO] Falha ao baixar Smart Turn: {_e}")
+        print(f"             Baixe manualmente: {_url}")
+        sys.exit(1)
 
 print()
 print("=" * 70)

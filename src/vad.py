@@ -211,14 +211,18 @@ def record_until_turn_end(
                     return frames
 
                 if turn_fn is not None:
-                    # confirma com Smart Turn a cada SHORT_SILENCE de silencio crescente
-                    if sil_ms - turn_checked_at >= SHORT_SILENCE_MS:
+                    # A partir do PISO de silencio (VAD_MIN_SILENCE), o Smart Turn decide
+                    # se foi fim real ou so pausa. Design seguro: so pode ESTENDER a escuta
+                    # (tolerar pausa), nunca cortar antes do piso. Re-checa a cada SHORT_SILENCE.
+                    if sil_ms >= VAD_MIN_SILENCE_MS and (sil_ms - turn_checked_at) >= SHORT_SILENCE_MS:
                         turn_checked_at = sil_ms
                         try:
-                            complete, _p = turn_fn(_frames_to_int16(frames), sample_rate)
+                            complete, p = turn_fn(_frames_to_int16(frames), sample_rate)
+                            print(f"[turn] sil={sil_ms:.0f}ms prob={p:.2f} -> "
+                                  f"{'fim' if complete else 'pausa, continua escutando'}")
                         except Exception as e:
                             print(f"[turn] erro no Smart Turn: {e}")
-                            complete = sil_ms >= VAD_MIN_SILENCE_MS
+                            complete = True
                         if complete:
                             return frames
                 else:
