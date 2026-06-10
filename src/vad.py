@@ -113,77 +113,132 @@ def get_confidence(
         return 0.0
 
 
-def record_until_silence_vad(
+def _frames_to_int16(frames: list) -> np.ndarray:
+    """Concatena os frames capturados em um vetor int16 1D (a fala ate agora)."""
+    if not frames:
+        return np.zeros(0, dtype=np.int16)
+    return np.concatenate([f.flatten() for f in frames]).astype(np.int16)
+
+
+def record_until_turn_end(
     stream,
     sample_rate: int = 16000,
-    max_duration: float = 10.0,
-    silence_threshold: float = 0.5,
-    min_silence_duration: float = 0.5,
+    max_duration: float | None = None,
+    speech_threshold: float = 0.5,
 ) -> list[np.ndarray]:
     """
-    Grava ate Silero VAD detectar fim de fala.
+    Endpointing tolerante (F1.6): Silero VAD detecta candidato a silencio; se o
+    Smart Turn estiver disponivel, ele CONFIRMA se o humano realmente terminou —
+    pausas de pensamento nao cortam a fala.
 
-    Args:
-        stream: sounddevice InputStream aberto
-        sample_rate: taxa de amostragem
-        max_duration: duracao maxima de gravacao
-        silence_threshold: limiar Silero VAD (< threshold = silencio)
-        min_silence_duration: tempo minimo de silencio para considerar fim (segundos)
+    Cascata:
+      1. VAD por chunk de 512 (voz/silencio).
+      2. So encerra apos fala minima (ignora blips de eco).
+      3. Em silencio: se Smart Turn ligado, pergunta "terminou?" a cada SHORT_SILENCE;
+         senao, encerra no VAD_MIN_SILENCE.
+      4. Fallback duro (VAD_HARD_SILENCE) garante que nunca trava.
 
-    Returns:
-        Lista de frames (numpy arrays) gravados
+    Returns: lista de frames (numpy arrays) gravados.
     """
     import time
+    from config import (
+        VAD_MIN_SILENCE_MS, VAD_MAX_UTTERANCE_S, VAD_MIN_SPEECH_MS,
+        VAD_HARD_SILENCE_MS, TURN_ENABLED, SHORT_SILENCE_MS,
+    )
+
+    if max_duration is None:
+        max_duration = VAD_MAX_UTTERANCE_S
+
+    # Smart Turn (F1.6.2) — opcional: se o modulo/modelo nao existir, cai pra VAD puro.
+    turn_fn = None
+    if TURN_ENABLED:
+        try:
+            from turn import predict_endpoint
+            turn_fn = predict_endpoint
+        except Exception as e:
+            print(f"[turn] Smart Turn indisponivel, usando so VAD: {e}")
 
     model = _get_model()
     frames = []
     silence_start = None
     start = time.time()
     spoke = False
-    capture_chunk = int(sample_rate * 0.08)  # 80ms p/ captura (sounddevice)
-    vad_chunk_size = 512 if sample_rate == 16000 else 256  # Silero exige tamanho exato
+    voiced_ms = 0.0
+    turn_checked_at = 0.0  # ultimo nivel de silencio (ms) em que consultamos o Smart Turn
+    capture_chunk = int(sample_rate * 0.08)
+    vad_chunk_size = 512 if sample_rate == 16000 else 256
+    chunk_ms = vad_chunk_size / sample_rate * 1000.0
 
     try:
         vad_buffer = np.array([], dtype=np.float32)
 
-        while True:
-            elapsed = time.time() - start
-            if elapsed >= max_duration:
-                break
-
+        while time.time() - start < max_duration:
             data, _ = stream.read(capture_chunk)
             frames.append(data)
+            vad_buffer = np.concatenate(
+                [vad_buffer, data.astype(np.float32).flatten() / 32768.0]
+            )
 
-            # Normalizar para float32 [-1, 1] e garantir 1D
-            # (sounddevice retorna shape (N, channels) — flatten para (N,))
-            audio = data.astype(np.float32).flatten() / 32768.0
-
-            # Acumular no buffer VAD (sempre 1D)
-            vad_buffer = np.concatenate([vad_buffer, audio])
-
-            # Processar chunks de VAD enquanto ha buffer suficiente
-            confidence = 0.0
             while len(vad_buffer) >= vad_chunk_size:
                 chunk = vad_buffer[:vad_chunk_size]
                 vad_buffer = vad_buffer[vad_chunk_size:]
-
                 try:
-                    audio_tensor = torch.from_numpy(chunk).float()
-                    confidence = float(model(audio_tensor, sample_rate))
+                    conf = float(model(torch.from_numpy(chunk).float(), sample_rate))
                 except Exception:
-                    confidence = 0.0
+                    conf = 0.0
 
-                # Detectar transicao voz -> silencio
-                if confidence > silence_threshold:
+                if conf > speech_threshold:
                     spoke = True
+                    voiced_ms += chunk_ms
                     silence_start = None
-                elif spoke:
-                    if silence_start is None:
-                        silence_start = time.time()
-                    elif time.time() - silence_start >= min_silence_duration:
+                    turn_checked_at = 0.0
+                    continue
+
+                if not spoke:
+                    continue
+
+                # ---- em silencio, apos ter falado ----
+                if silence_start is None:
+                    silence_start = time.time()
+                sil_ms = (time.time() - silence_start) * 1000.0
+
+                # gate de fala minima: ignora blips curtos (eco)
+                if voiced_ms < VAD_MIN_SPEECH_MS:
+                    continue
+
+                # fallback duro: nunca trava esperando
+                if sil_ms >= VAD_HARD_SILENCE_MS:
+                    return frames
+
+                if turn_fn is not None:
+                    # A partir do PISO de silencio (VAD_MIN_SILENCE), o Smart Turn decide
+                    # se foi fim real ou so pausa. Design seguro: so pode ESTENDER a escuta
+                    # (tolerar pausa), nunca cortar antes do piso. Re-checa a cada SHORT_SILENCE.
+                    if sil_ms >= VAD_MIN_SILENCE_MS and (sil_ms - turn_checked_at) >= SHORT_SILENCE_MS:
+                        turn_checked_at = sil_ms
+                        try:
+                            complete, p = turn_fn(_frames_to_int16(frames), sample_rate)
+                            print(f"[turn] sil={sil_ms:.0f}ms prob={p:.2f} -> "
+                                  f"{'fim' if complete else 'pausa, continua escutando'}")
+                        except Exception as e:
+                            print(f"[turn] erro no Smart Turn: {e}")
+                            complete = True
+                        if complete:
+                            return frames
+                else:
+                    # so VAD: encerra no silencio minimo
+                    if sil_ms >= VAD_MIN_SILENCE_MS:
                         return frames
 
     except Exception as e:
         print(f"[audio-vad] erro durante gravacao: {e}")
 
     return frames
+
+
+# Compat: nome antigo aponta para a nova funcao (endpointing tolerante).
+def record_until_silence_vad(stream, sample_rate=16000, max_duration=None,
+                             silence_threshold=0.5, min_silence_duration=None):
+    return record_until_turn_end(stream, sample_rate=sample_rate,
+                                 max_duration=max_duration,
+                                 speech_threshold=silence_threshold)

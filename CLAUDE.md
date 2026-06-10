@@ -13,11 +13,12 @@ Desenvolvimento solo. Hardware fixo: Ryzen 5 4500 · 16GB RAM · **RX 580 8GB** 
 - `CONTINUATION.md` — mapa de migração Linux→Windows
 - `docs/memory/` — contexto, hardware, pesquisa
 
-## Estado Atual — v0.2.0 (Fase 1 concluída)
+## Estado Atual — v0.3.0 (Fase 1.6 — Conversação Fluida)
 Pipeline end-to-end funcional com **wake word determinístico** e LLM 4B denso (leve, deixa a máquina livre):
 - **Wake word:** openWakeWord hey_jarvis (ONNX classificador, 0-1 score) — `src/wake.py`
 - **STT:** faster-whisper `small` (CPU, pt-BR, apenas sobre fala válida) — `src/stt.py`
-- **VAD:** Silero VAD para endpointing (fim de fala detectado em <300ms) — `src/vad.py`
+- **VAD + turn-taking:** Silero VAD (gate) + **Smart Turn v3** (endpoint semântico, tolera pausa de
+  pensamento) — `src/vad.py` + `src/turn.py`. Validado em voz real (prob 0.01 em frase incompleta).
 - **LLM:** Qwen3-4B-Instruct-2507 (Q8) via llama-server **padrão** + Vulkan (RX 580) — `src/llm_local.py`
   - Denso, cabe 100% na VRAM (~5GB). Binário padrão `tools/llama.cpp/` — sem turbo/flash-attn/n-cpu-moe.
 - **Amostragem:** top_k=20, top_p=0.8, presence_penalty=1.5 (model card) — sem repetição
@@ -25,7 +26,14 @@ Pipeline end-to-end funcional com **wake word determinístico** e LLM 4B denso (
 - **Áudio:** sounddevice, device padrão do SO + auto-detecção Jabra — `src/audio.py`
 - **Orquestração:** openWakeWord → Silero VAD → STT → LLM → TTS — `src/main.py` (FSM 7 estados)
 
-**Fase 1 concluída:** determinismo (sem fallback invisível), ~15-20 tok/s, ~15s startup, voz pt-BR coerente.
+**Fase 1 + 1.6 concluídas:** determinismo, ~15-20 tok/s, conversa com pausas naturais sem corte.
+
+**Issues conhecidas (próximo ciclo):**
+- Buffer overflow no loop IDLE de wake (read-predict não drena) → pode gerar wake falso / "Sim?" repetido.
+- `_is_dismiss` casa "obrigado"/"valeu" em qualquer lugar → dispensa no meio de fala longa.
+- Drain pós-dispensa ausente (só no timeout) → fala continuada redispara o wake.
+- STT vazio após gravação longa em sessão "glitch" (eco/ruído não transcrito).
+- UX de shutdown (jarvis.bat pergunta "finalizar lotes?").
 
 > O modelo MoE 35B (Qwen3.6-35B-A3B via TurboQuant) está **preservado na tag `35b-turboquant`**.
 > Para restaurar: `git checkout 35b-turboquant` (exige o binário turbo em `A:\llama-cpp-turboquant\`).
