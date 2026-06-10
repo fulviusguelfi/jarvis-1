@@ -16,6 +16,10 @@ torch>=2.0.0           # dependencia do silero-vad v6
 librosa>=0.10          # mel-spectrogram p/ specs (opcional, openWakeWord usa ONNX direto)
 pytest>=7.0.0          # testes da Fase 1 (F1.1-F1.5)
 
+# --- Fase 1.6 (Conversacao Fluida) — implementado ---
+huggingface_hub>=0.20  # baixar o modelo Smart Turn v3 (endpoint semantico)
+# onnxruntime ja listado acima (roda o Smart Turn v3 na CPU)
+
 # --- Fases futuras (planejado — ver docs/PLANO.md) ---
 # pynput         # automação teclado/mouse X11 (XTEST)
 # EWMHlib        # controle de janelas X11/KDE

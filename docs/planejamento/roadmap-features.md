@@ -101,7 +101,47 @@ pipeline sobreposto preservado; 4B vs 8B comparado e decidido. → merge `develo
 
 ---
 
-## FASE 2 — TOOL CALLING → `v0.3.0`
+## FASE 1.6 — CONVERSAÇÃO FLUIDA → `v0.3.0` (turn-taking)
+
+**Objetivo:** tornar a escuta natural — não cortar o usuário no meio de uma pausa de raciocínio, e
+não se auto-disparar com o próprio TTS. Descoberto no 1º teste de voz real (4B): o modelo responde
+bem, mas o endpointing por silêncio puro (0.5s) corta falas e o eco do TTS reativa o assistente.
+
+**Pesquisa (jun/2026):** Alexa/Google, LiveKit e Pipecat abandonaram silêncio-puro. Padrão de sucesso:
+cascata **VAD (gate) → modelo de turn semântico → (depois) AEC/barge-in**. VAD não distingue "pausa pra
+pensar" de "terminei"; um classificador de turno (áudio/prosódia) sim — e é determinístico, igual ao
+wake word.
+
+### F1.6.1 — `feat/fluid-conversation` · Endpointing tolerante a pausa
+- **Substitui:** corte por 0.5s de silêncio + teto de 10s em `record_until_silence_vad` (`vad.py`).
+- **Como:** tunáveis no `.env` (silêncio 0.8s, teto 30s, fala mínima 250ms, fallback duro 2.5s);
+  `drain_mic()` + settle de ~350ms após o TTS antes de reabrir o mic.
+- **DOR:** Fase 1 fechada (v0.2.1, 17/17 testes).
+- **DOD:**
+  - [ ] Pausa de ~1s no meio da fala NÃO encerra o turno
+  - [ ] Fala longa (>10s) não é cortada no teto
+  - [ ] **Zero** `[STT] 0.5s -> ''` e zero "Sim?" duplo após a resposta (eco tratado)
+
+### F1.6.2 — `feat/fluid-conversation` · Smart Turn v3 (endpoint semântico)
+- **Adiciona:** `src/turn.py` — modelo Smart Turn v3 (pipecat-ai, ONNX int8 8MB, ~12ms CPU, pt-BR).
+- **Como (verificado):** input 16kHz mono, ≤8s, padding de zeros no início; output = prob de turno
+  completo (thr ~0.5). Cascata: VAD detecta candidato a silêncio (~0.4s) → Smart Turn confirma se o
+  humano realmente terminou; se "incompleto", continua escutando (foi só pausa).
+- **DOR:** F1.6.1 mergeada.
+- **DOD:**
+  - [ ] `test_turn.py` carrega o modelo e valida output 0-1
+  - [ ] Em voz real, frase com pausa ("Então... me diz as horas") é capturada inteira
+  - [ ] Fallback duro (2.5s) garante que nunca trava esperando
+
+**DOD da FASE 1.6 (gate para `v0.3.0`):** conversa com pausas naturais sem corte; sem auto-disparo do
+TTS; teste de voz real validado. → merge `develop→main`, tag `v0.3.0`.
+
+> **Fora de escopo (futuro):** AEC + barge-in real (interromper o Jarvis falando) e captura contínua
+> por ring-buffer / FSM full-duplex. A+B aqui resolvem corte-no-meio e auto-disparo, não a interrupção.
+
+---
+
+## FASE 2 — TOOL CALLING → `v0.4.0`
 
 **Objetivo:** Qwen3 emite tool calls confiáveis. Base do arsenal agêntico.
 

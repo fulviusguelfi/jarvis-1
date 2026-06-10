@@ -5,8 +5,8 @@ import threading
 import numpy as np
 import sounddevice as sd
 import wave
-from config import AUDIO_SAMPLE_RATE, AUDIO_CHANNELS, AUDIO_RECORD_SECONDS
-from vad import record_until_silence_vad  # F1.2: Silero VAD endpointing
+from config import AUDIO_SAMPLE_RATE, AUDIO_CHANNELS, AUDIO_RECORD_SECONDS, VAD_MAX_UTTERANCE_S
+from vad import record_until_turn_end  # F1.6: endpointing tolerante (VAD + Smart Turn)
 
 # Áudio sempre no dispositivo padrão do SO: não passamos `device=`, então o
 # sounddevice usa sd.default.device, que o PortAudio resolve para o default do SO.
@@ -55,6 +55,21 @@ def _get_out_stream() -> sd.OutputStream:
             )
             _out_stream.start()
         return _out_stream
+
+
+def drain_mic() -> None:
+    """Descarta o que esta no buffer do mic (F1.6: mata eco do TTS / residuo).
+
+    Usar apos o Jarvis falar, antes de reabrir a escuta — evita que o eco da
+    propria resposta vire '[STT] 0.5s -> ' ou redispare o wake ("Sim?" duplo).
+    """
+    try:
+        stream = _get_mic_stream()
+        avail = stream.read_available
+        if avail > 0:
+            stream.read(avail)
+    except Exception as e:
+        print("[audio] erro ao drenar mic: {}".format(e))
 
 
 def read_mic_chunk(seconds: float = 2.5) -> bytes:
@@ -110,7 +125,7 @@ def record(duration: float = AUDIO_RECORD_SECONDS, out_path: str | None = None) 
 
 
 def record_until_silence(
-    max_duration: float = AUDIO_RECORD_SECONDS,
+    max_duration: float | None = None,
     silence_db: float = -40.0,  # Param legado (ignorado agora, para compatibilidade)
     silence_secs: float = 1.2,  # Param legado (ignorado agora, para compatibilidade)
     out_path: str | None = None,
@@ -119,20 +134,20 @@ def record_until_silence(
     """
     Grava audio até detectar fim de fala.
 
-    F1.2: Substituiu RMS por Silero VAD para endpointing preciso (< 300ms vs 1.2s).
-    Params silence_db e silence_secs sao ignorados (legado).
+    F1.6: endpointing tolerante (Silero VAD + Smart Turn). Tolera pausa de pensamento.
+    max_duration None -> usa VAD_MAX_UTTERANCE_S do config. silence_db/secs sao legado.
     """
+    if max_duration is None:
+        max_duration = VAD_MAX_UTTERANCE_S
     path = out_path or tempfile.mktemp(suffix=".wav")
     stream = _get_mic_stream()
 
     if vad_method == "silero":
-        # F1.2: novo metodo com Silero VAD
-        frames = record_until_silence_vad(
+        # F1.6: endpointing tolerante (VAD detecta pausa -> Smart Turn confirma fim)
+        frames = record_until_turn_end(
             stream,
             sample_rate=AUDIO_SAMPLE_RATE,
             max_duration=max_duration,
-            silence_threshold=0.5,  # Limiar Silero VAD
-            min_silence_duration=0.5,  # 500ms de silencio = fim de fala
         )
     else:
         # Fallback RMS (legado, para compat)

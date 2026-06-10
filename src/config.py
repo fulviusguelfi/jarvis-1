@@ -78,6 +78,27 @@ AUDIO_RECORD_SECONDS = 5
 AUDIO_SILENCE_THRESHOLD = 0.02
 AUDIO_SILENCE_DURATION = 1.0
 
+# --- Turn-taking / endpointing (Fase 1.6 — Conversacao Fluida) ---
+# Silencio para considerar CANDIDATO a fim de fala (sem Smart Turn). Humano pausa
+# 0.5-1.5s pra pensar; 0.8s tolera pausa sem cortar. (era 0.5s = cortava)
+VAD_MIN_SILENCE_MS = int(os.environ.get("VAD_MIN_SILENCE_MS", "800"))
+# Teto de duracao de uma fala (era 10s -> cortava frases longas).
+VAD_MAX_UTTERANCE_S = int(os.environ.get("VAD_MAX_UTTERANCE_S", "30"))
+# Fala minima antes de aceitar fim (ignora blips de eco que viram '[STT] 0.5s -> ').
+VAD_MIN_SPEECH_MS = int(os.environ.get("VAD_MIN_SPEECH_MS", "250"))
+# Fallback duro: encerra mesmo sem confirmacao semantica (nunca trava esperando).
+VAD_HARD_SILENCE_MS = int(os.environ.get("VAD_HARD_SILENCE_MS", "2500"))
+# Espera apos o TTS antes de reabrir o mic (mata eco -> "Sim?" duplo).
+POST_TTS_SETTLE_MS = int(os.environ.get("POST_TTS_SETTLE_MS", "350"))
+
+# --- Smart Turn v3 (F1.6.2 — endpoint semantico) ---
+# Liga a confirmacao por modelo de turno (classificador de "terminei de falar?").
+TURN_ENABLED = os.environ.get("TURN_ENABLED", "true").strip().lower() in ("1", "true", "yes")
+# Limiar de probabilidade do Smart Turn (> = turno completo).
+TURN_THRESHOLD = float(os.environ.get("TURN_THRESHOLD", "0.5"))
+# Silencio curto que dispara a consulta ao Smart Turn (candidato a pausa).
+SHORT_SILENCE_MS = int(os.environ.get("SHORT_SILENCE_MS", "400"))
+
 # Sistema
 def _build_system_prompt() -> str:
     from datetime import datetime
