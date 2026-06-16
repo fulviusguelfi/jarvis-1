@@ -132,6 +132,10 @@ def _settle_after_tts() -> None:
 
 def _is_dismiss(text: str) -> bool:
     t = text.strip().lower().rstrip(".,!?")
+    # Dispensa NAO acontece no meio de fala longa: so frases curtas (<=4 palavras).
+    # Antes, "obrigado" em qualquer lugar de um monologo dispensava por engano.
+    if len(t.split()) > 4:
+        return False
     return any(d in t for d in DISMISS_PHRASES)
 
 
@@ -140,6 +144,44 @@ def _say_dismiss():
     respostas = ["De nada!", "Disponha!", "Ate logo!", "Pode contar comigo."]
     samples, rate = synthesize(random.choice(respostas))
     play_samples(samples, rate)
+
+
+SHUTDOWN_PHRASES = {
+    "desligar", "desligue", "desliga", "pode desligar", "pode se desligar",
+    "encerrar", "encerre", "pode encerrar", "desligar jarvis", "desligue jarvis",
+    "pode desligar jarvis", "encerrar jarvis", "desligar o jarvis", "se desligue",
+}
+
+
+def _is_shutdown(text: str) -> bool:
+    """Comando explicito de DESLIGAR (encerra o programa limpo)."""
+    t = text.strip().lower().rstrip(".,!?")
+    if len(t.split()) > 4:
+        return False
+    return any(p in t for p in SHUTDOWN_PHRASES)
+
+
+def _clean_exit() -> None:
+    """Encerra limpo: para o mic e o llama-server (sem orfaos)."""
+    try:
+        stop_mic_stream()
+    except Exception:
+        pass
+    if LLM_MODE == "local":
+        try:
+            from llm_local import stop_server
+            stop_server()
+        except Exception as e:
+            print(f"[Jarvis] erro ao parar llama-server: {e}")
+
+
+def _do_shutdown() -> None:
+    """Desliga por comando de voz: avisa, limpa e sai (evita o prompt do Ctrl+C)."""
+    samples, rate = synthesize("Ate logo! Desligando.")
+    play_samples(samples, rate)
+    print("[Jarvis] Desligado por comando de voz.")
+    _clean_exit()
+    sys.exit(0)
 
 
 def _check_mic() -> bool:
@@ -292,12 +334,7 @@ def main():
 
     def handle_exit(sig, frame):
         print("\n[Jarvis] Encerrando...")
-        if LLM_MODE == "local":
-            try:
-                from llm_local import stop_server
-                stop_server()  # mata o llama-server (evita orfao)
-            except Exception as e:
-                print(f"[Jarvis] erro ao parar llama-server: {e}")
+        _clean_exit()  # para mic + llama-server (evita orfaos)
         sys.exit(0)
 
     signal.signal(signal.SIGINT, handle_exit)
@@ -351,9 +388,14 @@ def main():
                 fsm.transition(JarvisState.IDLE, "comando vazio apos remover jarvis")
                 continue
 
+            # Comando de desligar? Encerra limpo.
+            if _is_shutdown(clean):
+                _do_shutdown()
+
             # Frase de dispensa? Responde e volta ao modo de espera
             if _is_dismiss(clean):
                 _say_dismiss()
+                drain_mic()  # limpa o eco/fala antes de voltar ao wake (evita re-trigger)
                 print("[dispensado - aguardando 'Jarvis']")
                 fsm.transition(JarvisState.IDLE, "usuario dispensou")
                 continue
@@ -394,8 +436,12 @@ def main():
 
             clean_follow = text_follow.strip()
 
+            if _is_shutdown(clean_follow):
+                _do_shutdown()
+
             if _is_dismiss(clean_follow):
                 _say_dismiss()
+                drain_mic()  # limpa o eco/fala antes de voltar ao wake (evita re-trigger)
                 print("[dispensado - aguardando 'Jarvis']")
                 fsm.transition(JarvisState.IDLE, "usuario dispensou em conversa")
                 break
